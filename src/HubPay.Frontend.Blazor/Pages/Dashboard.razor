@@ -1,0 +1,101 @@
+@page "/"
+@using HubPay.Application.DTOs
+@inject HubPay.Frontend.Blazor.Services.HubPayApiClient Api
+
+<PageTitle>Dashboard — HubPay</PageTitle>
+
+<h1 class="mb-4">Dashboard de Operações</h1>
+
+@if (_loading)
+{
+    <p><i class="fas fa-spinner fa-spin"></i> A carregar métricas...</p>
+}
+else if (_stats is null)
+{
+    <div class="alert alert-warning">Não foi possível ligar à API. Verifique se a WebAPI está em execução.</div>
+}
+else
+{
+    <div class="row">
+        <div class="col-lg-3 col-6">
+            <div class="small-box bg-info">
+                <div class="inner">
+                    <h3>@_stats.TotalVolumeEur.ToString("N2") €</h3>
+                    <p>Volume Total Transacionado</p>
+                </div>
+                <div class="icon"><i class="fas fa-euro-sign"></i></div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-6">
+            <div class="small-box bg-success">
+                <div class="inner">
+                    <h3>@_stats.ConversionRatePercent.ToString("F1")%</h3>
+                    <p>Taxa de Conversão Geral</p>
+                </div>
+                <div class="icon"><i class="fas fa-chart-line"></i></div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-6">
+            <div class="small-box bg-danger">
+                <div class="inner">
+                    <h3>@_stats.FraudsBlocked</h3>
+                    <p>Fraudes Bloqueadas pela IA</p>
+                </div>
+                <div class="icon"><i class="fas fa-shield-alt"></i></div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-6">
+            <div class="small-box bg-warning">
+                <div class="inner">
+                    <h3>@_stats.TraExemptionCount</h3>
+                    <p>Isenções SCA (TRA)</p>
+                </div>
+                <div class="icon"><i class="fas fa-unlock"></i></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Wero/A2A vs Cartões Tradicionais</h3>
+        </div>
+        <div class="card-body">
+            @{
+                var total = Math.Max(_stats.WeroA2ACount + _stats.TraditionalCardCount, 1);
+                var weroPct = _stats.WeroA2ACount * 100 / total;
+                var cardPct = _stats.TraditionalCardCount * 100 / total;
+            }
+            <div class="mb-2 d-flex justify-content-between">
+                <span>Wero / SEPA Instant (A2A)</span>
+                <strong>@weroPct%</strong>
+            </div>
+            <div class="progress mb-3" style="height: 24px;">
+                <div class="progress-bar bg-primary" style="width: @(weroPct)%">@_stats.WeroA2ACount</div>
+            </div>
+            <div class="mb-2 d-flex justify-content-between">
+                <span>Cartões Tradicionais (Euro6000 / CB)</span>
+                <strong>@cardPct%</strong>
+            </div>
+            <div class="progress" style="height: 24px;">
+                <div class="progress-bar bg-secondary" style="width: @(cardPct)%">@_stats.TraditionalCardCount</div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private DashboardStatsDto? _stats;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _stats = await Api.GetDashboardStatsAsync();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

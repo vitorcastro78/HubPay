@@ -1,0 +1,108 @@
+@page "/antifraud/{TransactionId:guid}"
+@using HubPay.Application.DTOs
+@inject HubPay.Frontend.Blazor.Services.HubPayApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Detalhe Anti-Fraude</PageTitle>
+
+@if (_loading)
+{
+    <p><i class="fas fa-spinner fa-spin"></i> A carregar relatório IA...</p>
+}
+else if (_detail is null)
+{
+    <div class="alert alert-danger">Transação não encontrada.</div>
+}
+else
+{
+    <div class="mb-3">
+        <button class="btn btn-default" @onclick="GoBack">
+            <i class="fas fa-arrow-left"></i> Voltar
+        </button>
+    </div>
+
+    <h1>Relatório Anti-Fraude ONNX</h1>
+    <p class="text-muted">Transação @TransactionId</p>
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card card-primary">
+                <div class="card-header"><h3 class="card-title">Variáveis de Entrada (Feature Store)</h3></div>
+                <div class="card-body">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-6">Montante (EUR)</dt>
+                        <dd class="col-sm-6">@_detail.Amount.ToString("N2")</dd>
+                        <dt class="col-sm-6">IP Cliente</dt>
+                        <dd class="col-sm-6">@_detail.CustomerIp</dd>
+                        <dt class="col-sm-6">Tx. Device (5 min)</dt>
+                        <dd class="col-sm-6">@_detail.DeviceTransactionsLast5Min</dd>
+                        <dt class="col-sm-6">Países Email (1h)</dt>
+                        <dd class="col-sm-6">@_detail.EmailCountriesLastHour</dd>
+                        <dt class="col-sm-6">Amount Normalizado</dt>
+                        <dd class="col-sm-6">@_detail.NormalizedAmount.ToString("F4")</dd>
+                        <dt class="col-sm-6">IP Hash Feature</dt>
+                        <dd class="col-sm-6">@_detail.IpHashFeature.ToString("F4")</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card card-danger">
+                <div class="card-header"><h3 class="card-title">Resultado da Inferência</h3></div>
+                <div class="card-body">
+                    <h2 class="text-center display-4">@_detail.FinalScore.ToString("F2")</h2>
+                    <p class="text-center text-muted">Score 0–100 (PSD3 TRA)</p>
+                    <hr />
+                    <p><strong>Tempo de resposta IA:</strong> @_detail.ElapsedMilliseconds ms</p>
+                    <p><strong>SCA Status:</strong> <span class="badge badge-info">@_detail.ScaStatus</span></p>
+                    <p><strong>Estado transação:</strong> @_detail.Status</p>
+                    @if (_detail.UsedFallback)
+                    {
+                        <p class="text-warning"><i class="fas fa-exclamation-triangle"></i> Motor de fallback (regras estáticas) utilizado</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (_detail.Status is "Authorized" or "Settled")
+    {
+        <button class="btn btn-lg btn-warning" @onclick="RefundAsync" disabled="@_refunding">
+            @if (_refunding)
+            {
+                <i class="fas fa-spinner fa-spin"></i>
+            }
+            Emitir Reembolso (Refund)
+        </button>
+        @if (_refundMessage is not null)
+        {
+            <span class="ml-2">@_refundMessage</span>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid TransactionId { get; set; }
+
+    private AntiFraudDetailDto? _detail;
+    private bool _loading = true;
+    private bool _refunding;
+    private string? _refundMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _detail = await Api.GetAntiFraudDetailAsync(TransactionId);
+        _loading = false;
+    }
+
+    private void GoBack() => Nav.NavigateTo("/transactions");
+
+    private async Task RefundAsync()
+    {
+        _refunding = true;
+        var ok = await Api.RefundAsync(TransactionId);
+        _refundMessage = ok ? "Reembolso processado com sucesso." : "Falha ao processar reembolso.";
+        _refunding = false;
+        _detail = await Api.GetAntiFraudDetailAsync(TransactionId);
+    }
+}

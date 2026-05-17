@@ -1,0 +1,123 @@
+@page "/transactions"
+@using HubPay.Application.DTOs
+@using HubPay.Application.Queries
+@inject HubPay.Frontend.Blazor.Services.HubPayApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Transações — HubPay</PageTitle>
+
+<h1 class="mb-4">Monitor Transacional Europeu</h1>
+
+@if (_loading)
+{
+    <p><i class="fas fa-spinner fa-spin"></i> A carregar...</p>
+}
+else
+{
+    <div class="card">
+        <div class="card-body table-responsive p-0">
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>País</th>
+                        <th>Esquema</th>
+                        <th>Montante</th>
+                        <th>Estado</th>
+                        <th>Score IA</th>
+                        <th>SCA</th>
+                        <th>Data</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var tx in _items)
+                    {
+                        <tr>
+                            <td><span class="badge badge-info">@GetCountryFlag(tx)</span></td>
+                            <td><strong>@FormatScheme(tx.PaymentScheme)</strong></td>
+                            <td>@tx.Amount.ToString("N2") @tx.Currency</td>
+                            <td><span class="badge @GetStatusBadge(tx.Status)">@tx.Status</span></td>
+                            <td>@tx.AntiFraudScore.ToString("F2")</td>
+                            <td>@tx.ScaStatus</td>
+                            <td>@tx.CreatedAt.ToLocalTime().ToString("g")</td>
+                            <td>
+                                <button class="btn btn-sm btn-primary" @onclick="() => OpenDetail(tx.Id)">
+                                    <i class="fas fa-search"></i> Detalhe
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="card-footer clearfix">
+            <button class="btn btn-secondary btn-sm" disabled="@(_page <= 1)" @onclick="PrevPage">Anterior</button>
+            <span class="mx-2">Página @_page de @_totalPages</span>
+            <button class="btn btn-secondary btn-sm" disabled="@(_page >= _totalPages)" @onclick="NextPage">Seguinte</button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<TransactionDto> _items = [];
+    private bool _loading = true;
+    private int _page = 1;
+    private int _totalPages = 1;
+    private const int PageSize = 15;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        var result = await Api.GetTransactionsAsync(_page, PageSize);
+        if (result is not null)
+        {
+            _items = result.Items.ToList();
+            _totalPages = Math.Max(1, (int)Math.Ceiling(result.Total / (double)PageSize));
+        }
+        _loading = false;
+    }
+
+    private async Task PrevPage() { if (_page > 1) { _page--; await LoadAsync(); } }
+    private async Task NextPage() { if (_page < _totalPages) { _page++; await LoadAsync(); } }
+    private void OpenDetail(Guid id) => Nav.NavigateTo($"/antifraud/{id}");
+
+    private static string FormatScheme(string scheme) => scheme switch
+    {
+        "MBWAY" => "MB WAY",
+        "MULTIBANCO" => "Multibanco",
+        "BIZUM" => "Bizum",
+        "WERO" => "Wero",
+        "IDEAL" => "iDEAL",
+        "BANCONTACT" => "Bancontact",
+        "SWISH" => "Swish",
+        "VIPPSMOBILEPAY" => "Vipps MobilePay",
+        _ => scheme
+    };
+
+    private static string GetCountryFlag(TransactionDto tx)
+    {
+        var code = tx.CountryCode ?? tx.PaymentScheme switch
+        {
+            "MBWAY" or "MULTIBANCO" => "PT",
+            "BIZUM" or "EURO6000" => "ES",
+            "WERO" or "CARTESBANCAIRES" => "DE",
+            "IDEAL" => "NL",
+            "BANCONTACT" => "BE",
+            "BANCOMATPAY" => "IT",
+            "SWISH" => "SE",
+            "VIPPSMOBILEPAY" => "NO",
+            _ => "EU"
+        };
+        return code;
+    }
+
+    private static string GetStatusBadge(string status) => status switch
+    {
+        "Authorized" or "Settled" => "badge-success",
+        "BlockedByAntiFraud" => "badge-danger",
+        "Pending" => "badge-warning",
+        _ => "badge-secondary"
+    };
+}
