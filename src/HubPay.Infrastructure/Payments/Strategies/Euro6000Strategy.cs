@@ -1,40 +1,30 @@
-using System.Text.Json;
+using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
-using HubPay.Domain.Models;
 using HubPay.Domain.Interfaces;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
-public sealed class Euro6000Strategy : PaymentStrategyBase
+public sealed class Euro6000Strategy : PspEndpointStrategyBase
 {
-    public Euro6000Strategy(HttpClient httpClient, ILogger<Euro6000Strategy> logger, ITransactionRepository repository)
-        : base(httpClient, logger, repository)
-    {
-        HttpClient.BaseAddress = new Uri("https://api.euro6000.es/sandbox");
-    }
+    public Euro6000Strategy(
+        HttpClient httpClient,
+        ILogger<Euro6000Strategy> logger,
+        ITransactionRepository repository,
+        IOptions<HubPaySettings> options)
+        : base(httpClient, options.Value.Euro6000, "EURO6000", logger, repository) { }
 
     public override string SchemeName => "EURO6000";
+    protected override string PaymentInitPath => "/v1/debit/route";
+    protected override string? DefaultRedirectUrl => null;
 
-    public override async Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
+    protected override object BuildPaymentPayload(Transaction transaction) => new
     {
-        var payload = new
-        {
-            merchantId = transaction.MerchantId,
-            amount = transaction.Amount,
-            cardScheme = "EURO6000",
-            panToken = $"tok_{transaction.DeviceFingerprint[..Math.Min(8, transaction.DeviceFingerprint.Length)]}"
-        };
-
-        try
-        {
-            await PostJsonAsync<object, JsonElement>("/debit/route", payload, ct);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Euro6000 simulação");
-        }
-
-        return new PaymentResult(true, $"E6K-{transaction.Id:N}"[..20], "Pending", null, JsonSerializer.Serialize(payload));
-    }
+        merchantId = transaction.MerchantId,
+        amount = new { value = transaction.Amount, currency = transaction.Currency },
+        cardScheme = "EURO6000",
+        panToken = $"tok_{transaction.DeviceFingerprint[..Math.Min(8, transaction.DeviceFingerprint.Length)]}",
+        notificationUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
+    };
 }

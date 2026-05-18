@@ -1,34 +1,30 @@
-using System.Text.Json;
+using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
 using HubPay.Domain.Interfaces;
-using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
-public sealed class VippsMobilePayStrategy : PaymentStrategyBase
+public sealed class VippsMobilePayStrategy : PspEndpointStrategyBase
 {
-    public VippsMobilePayStrategy(HttpClient httpClient, ILogger<VippsMobilePayStrategy> logger, ITransactionRepository repository)
-        : base(httpClient, logger, repository)
-    {
-        HttpClient.BaseAddress = new Uri("https://api.vipps.no/sandbox");
-    }
+    public VippsMobilePayStrategy(
+        HttpClient httpClient,
+        ILogger<VippsMobilePayStrategy> logger,
+        ITransactionRepository repository,
+        IOptions<HubPaySettings> options)
+        : base(httpClient, options.Value.VippsMobilePay, "VIPPSMOBILEPAY", logger, repository) { }
 
     public override string SchemeName => "VIPPSMOBILEPAY";
+    protected override string PaymentInitPath => "/epayment/v1/payments";
+    protected override string? DefaultRedirectUrl => "https://api.vipps.no/dwo/checkout";
 
-    public override Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
+    protected override object BuildPaymentPayload(Transaction transaction) => new
     {
-        var payload = new
-        {
-            merchantSerialNumber = transaction.MerchantId,
-            amount = transaction.Amount * 100,
-            currency = "NOK",
-            settlementScheme = "SEPA_INST",
-            endToEndId = transaction.EndToEndId
-        };
-
-        return Task.FromResult(new PaymentResult(
-            true, $"VIP-{transaction.Id:N}"[..20], "Pending",
-            "https://api.vipps.no/dwo/checkout", JsonSerializer.Serialize(payload)));
-    }
+        merchantSerialNumber = transaction.MerchantId,
+        amount = new { value = transaction.Amount * 100, currency = "NOK" },
+        settlementScheme = "SEPA_INST",
+        endToEndId = transaction.EndToEndId,
+        callbackUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
+    };
 }

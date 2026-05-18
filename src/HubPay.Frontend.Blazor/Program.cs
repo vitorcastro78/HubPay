@@ -12,5 +12,6 @@ builder.Services.AddScoped(sp => new HttpClient
     BaseAddress = new Uri(builder.Configuration["ApiBaseUrl"] ?? "https://localhost:7089/")
 });
 builder.Services.AddScoped<HubPayApiClient>();
+builder.Services.AddScoped<TransactionHubClient>();
 
 await builder.Build().RunAsync();

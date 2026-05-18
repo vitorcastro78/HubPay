@@ -13,15 +13,18 @@ public sealed class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentC
     private readonly ITransactionRepository _repository;
     private readonly IAntiFraudEngine _antiFraudEngine;
     private readonly IPaymentStrategyFactory _strategyFactory;
+    private readonly ITransactionNotifier _notifier;
 
     public CreatePaymentCommandHandler(
         ITransactionRepository repository,
         IAntiFraudEngine antiFraudEngine,
-        IPaymentStrategyFactory strategyFactory)
+        IPaymentStrategyFactory strategyFactory,
+        ITransactionNotifier notifier)
     {
         _repository = repository;
         _antiFraudEngine = antiFraudEngine;
         _strategyFactory = strategyFactory;
+        _notifier = notifier;
     }
 
     public async Task<PaymentResponseDto> Handle(CreatePaymentCommand command, CancellationToken ct)
@@ -93,6 +96,8 @@ public sealed class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentC
                 await _repository.UpdateAsync(transaction, ct);
             }
         }
+
+        await _notifier.NotifyUpdatedAsync(transaction, ct);
 
         return new PaymentResponseDto(
             transaction.Id,

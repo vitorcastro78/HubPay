@@ -1,28 +1,33 @@
-using System.Text.Json;
+using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
 using HubPay.Domain.Interfaces;
-using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
-public sealed class IDealStrategy : PaymentStrategyBase
+public sealed class IDealStrategy : PspEndpointStrategyBase
 {
-    public IDealStrategy(HttpClient httpClient, ILogger<IDealStrategy> logger, ITransactionRepository repository)
-        : base(httpClient, logger, repository)
-    {
-        HttpClient.BaseAddress = new Uri("https://api.ideal.nl/sandbox");
-    }
+    public IDealStrategy(
+        HttpClient httpClient,
+        ILogger<IDealStrategy> logger,
+        ITransactionRepository repository,
+        IOptions<HubPaySettings> options)
+        : base(httpClient, options.Value.Ideal, "IDEAL", logger, repository) { }
 
     public override string SchemeName => "IDEAL";
+    protected override string PaymentInitPath => "/v1/transactions";
+    protected override string? DefaultRedirectUrl => "https://ideal.nl/checkout";
 
-    public override Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
+    protected override object BuildPaymentPayload(Transaction transaction)
     {
-        var transactionToken = Guid.NewGuid().ToString("N");
-        var redirectUrl = $"https://ideal.nl/checkout?token={transactionToken}";
-        var qrPayload = $"ideal://pay?token={transactionToken}&amount={transaction.Amount:F2}&currency=EUR";
-
-        var payload = new { transactionToken, redirectUrl, qrCode = qrPayload, endToEndId = transaction.EndToEndId };
-        return Task.FromResult(new PaymentResult(true, transactionToken, "Pending", redirectUrl, JsonSerializer.Serialize(payload)));
+        var token = Guid.NewGuid().ToString("N");
+        return new
+        {
+            transactionToken = token,
+            amount = new { value = transaction.Amount, currency = "EUR" },
+            endToEndId = transaction.EndToEndId,
+            returnUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
+        };
     }
 }

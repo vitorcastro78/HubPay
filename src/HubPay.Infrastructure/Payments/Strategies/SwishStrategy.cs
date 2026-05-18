@@ -1,33 +1,31 @@
-using System.Text.Json;
+using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
 using HubPay.Domain.Interfaces;
-using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
-public sealed class SwishStrategy : PaymentStrategyBase
+public sealed class SwishStrategy : PspEndpointStrategyBase
 {
-    public SwishStrategy(HttpClient httpClient, ILogger<SwishStrategy> logger, ITransactionRepository repository)
-        : base(httpClient, logger, repository)
-    {
-        HttpClient.BaseAddress = new Uri("https://api.swish.nu/sandbox");
-    }
+    public SwishStrategy(
+        HttpClient httpClient,
+        ILogger<SwishStrategy> logger,
+        ITransactionRepository repository,
+        IOptions<HubPaySettings> options)
+        : base(httpClient, options.Value.Swish, "SWISH", logger, repository) { }
 
     public override string SchemeName => "SWISH";
+    protected override string PaymentInitPath => "/v2/paymentrequests";
+    protected override string? DefaultRedirectUrl => "swish://payment";
 
-    public override Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
+    protected override object BuildPaymentPayload(Transaction transaction) => new
     {
-        var payload = new
-        {
-            payeeAlias = transaction.MerchantId,
-            amount = transaction.Amount,
-            currency = "SEK",
-            settlement = "SEPA_INST",
-            message = transaction.EndToEndId
-        };
-
-        return Task.FromResult(new PaymentResult(
-            true, $"SW-{transaction.Id:N}"[..20], "Pending", "swish://payment", JsonSerializer.Serialize(payload)));
-    }
+        payeeAlias = transaction.MerchantId,
+        amount = transaction.Amount,
+        currency = "SEK",
+        settlement = "SEPA_INST",
+        message = transaction.EndToEndId,
+        callbackUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
+    };
 }

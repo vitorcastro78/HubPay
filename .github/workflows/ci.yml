@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hubpay_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Generate ONNX model
+        run: |
+          pip install numpy scikit-learn skl2onnx onnx
+          python scripts/generate_antifraud_onnx.py
+        continue-on-error: true
+
+      - name: Restore
+        run: dotnet restore HubPay.sln
+
+      - name: Build
+        run: dotnet build HubPay.sln --configuration Release --no-restore
+
+      - name: Unit tests
+        run: dotnet test tests/HubPay.Tests.Unit/HubPay.Tests.Unit.csproj --configuration Release --no-build --verbosity normal
+
+      - name: Integration tests
+        env:
+          HUBPAY_CONNECTION_STRING: Host=localhost;Port=5432;Database=hubpay_ci;Username=postgres;Password=postgres
+        run: dotnet test tests/HubPay.Tests.Integration/HubPay.Tests.Integration.csproj --configuration Release --verbosity normal

@@ -1,42 +1,30 @@
-using System.Text.Json;
+using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
 using HubPay.Domain.Interfaces;
-using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
-public sealed class CartesBancairesStrategy : PaymentStrategyBase
+public sealed class CartesBancairesStrategy : PspEndpointStrategyBase
 {
-    public CartesBancairesStrategy(HttpClient httpClient, ILogger<CartesBancairesStrategy> logger, ITransactionRepository repository)
-        : base(httpClient, logger, repository)
-    {
-        HttpClient.BaseAddress = new Uri("https://api.cartesbancaires.fr/sandbox");
-    }
+    public CartesBancairesStrategy(
+        HttpClient httpClient,
+        ILogger<CartesBancairesStrategy> logger,
+        ITransactionRepository repository,
+        IOptions<HubPaySettings> options)
+        : base(httpClient, options.Value.CartesBancaires, "CARTESBANCAIRES", logger, repository) { }
 
     public override string SchemeName => "CARTESBANCAIRES";
+    protected override string PaymentInitPath => "/v1/payments/authorize";
+    protected override string? DefaultRedirectUrl => "https://acs.cartesbancaires.fr/challenge";
 
-    public override async Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
+    protected override object BuildPaymentPayload(Transaction transaction) => new
     {
-        var payload = new
-        {
-            scheme = "CB",
-            amount = transaction.Amount,
-            currency = "EUR",
-            merchantId = transaction.MerchantId,
-            authentication = "3DS"
-        };
-
-        try
-        {
-            await PostJsonAsync<object, JsonElement>("/payments/authorize", payload, ct);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Cartes Bancaires simulação");
-        }
-
-        return new PaymentResult(true, $"CB-{transaction.Id:N}"[..20], "Pending",
-            "https://acs.cartesbancaires.fr/challenge", JsonSerializer.Serialize(payload));
-    }
+        scheme = "CB",
+        amount = new { value = transaction.Amount, currency = "EUR" },
+        merchantId = transaction.MerchantId,
+        authentication = "3DS",
+        notificationUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
+    };
 }

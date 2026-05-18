@@ -1,6 +1,7 @@
 using System.Text.Json;
 using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
+using HubPay.Domain.Exceptions;
 using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
@@ -11,6 +12,7 @@ namespace HubPay.Infrastructure.Payments.Strategies;
 public sealed class MBWayStrategy : PaymentStrategyBase
 {
     private readonly SibsApiSettings _settings;
+    private readonly PspApiClient _api;
 
     public MBWayStrategy(
         HttpClient httpClient,
@@ -19,8 +21,7 @@ public sealed class MBWayStrategy : PaymentStrategyBase
         IOptions<HubPaySettings> options) : base(httpClient, logger, repository)
     {
         _settings = options.Value.Sibs;
-        HttpClient.BaseAddress = new Uri(_settings.BaseUrl);
-        HttpClient.DefaultRequestHeaders.Add("X-API-Key", _settings.ApiKey);
+        _api = new PspApiClient(httpClient, _settings, SchemeName, logger);
     }
 
     public override string SchemeName => "MBWAY";
@@ -33,22 +34,47 @@ public sealed class MBWayStrategy : PaymentStrategyBase
             amount = new { value = transaction.Amount, currency = transaction.Currency },
             customer = new { email = transaction.CustomerEmail },
             paymentMethod = "MBWAY",
-            callbackUrl = "https://hubpay.eu/webhooks/sibs/mbway"
+            callbackUrl = PspStrategyHelper.WebhookUrl(_settings, SchemeName)
         };
 
         try
         {
-            var response = await PostJsonAsync<object, JsonElement>("/v1/mbway/payments", payload, ct);
-            var externalRef = response.TryGetProperty("paymentId", out var pid) ? pid.GetString() : transaction.Id.ToString();
-            Logger.LogInformation("MB WAY iniciado SIBS ref={Ref}", externalRef);
-            return new PaymentResult(true, externalRef ?? transaction.Id.ToString(), "Pending", null,
-                JsonSerializer.Serialize(payload));
+            var response = await _api.PostAsync(_settings.MbWayInitPath, payload, ct);
+            var externalRef = PspStrategyHelper.ReadString(response, "paymentId", "id")
+                              ?? transaction.Id.ToString();
+            var redirectUrl = PspStrategyHelper.ReadString(response, "redirectUrl", "paymentUrl");
+
+            Logger.LogInformation("MB WAY SIBS iniciado ref={Ref} mTLS={Mtls}", externalRef, _settings.MutualTls.Enabled);
+            return new PaymentResult(true, externalRef, "Pending", redirectUrl, JsonSerializer.Serialize(payload));
         }
-        catch (Exception ex)
+        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
         {
-            Logger.LogWarning(ex, "Simulação MB WAY - fallback local");
-            return new PaymentResult(true, $"MBW-{transaction.Id:N}"[..20], "Pending", null,
-                JsonSerializer.Serialize(payload));
+            return PspStrategyHelper.BuildFallback(transaction, SchemeName, "Pending", null, payload, Logger, ex);
+        }
+    }
+
+    public override async Task<RefundResult> RefundAsync(Guid transactionId, decimal amount, CancellationToken ct)
+    {
+        var transaction = await Repository.GetByIdAsync(transactionId, ct);
+        if (transaction is null)
+            return new RefundResult(false, string.Empty, amount, "NOT_FOUND");
+
+        if (string.IsNullOrWhiteSpace(transaction.ExternalReference))
+            return await base.RefundAsync(transactionId, amount, ct);
+
+        var path = _settings.RefundPath.Replace("{paymentId}", transaction.ExternalReference, StringComparison.Ordinal);
+        var body = new { amount = new { value = amount, currency = transaction.Currency }, reason = "MERCHANT_INITIATED" };
+
+        try
+        {
+            var response = await _api.PostAsync(path, body, ct);
+            var refundId = PspStrategyHelper.ReadString(response, "refundId", "id") ?? $"RF-MBW-{Guid.NewGuid():N}"[..24];
+            return new RefundResult(true, refundId, amount, "REFUNDED");
+        }
+        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        {
+            Logger.LogWarning(ex, "Reembolso MB WAY em fallback simulado");
+            return await base.RefundAsync(transactionId, amount, ct);
         }
     }
 }

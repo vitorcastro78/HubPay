@@ -1,4 +1,3 @@
-using System.Xml.Linq;
 using HubPay.Domain.Configuration;
 using HubPay.Domain.Enums;
 using HubPay.Domain.Interfaces;
@@ -46,39 +45,50 @@ public sealed class FinancialClearingEngine : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var repository = scope.ServiceProvider.GetRequiredService<ITransactionRepository>();
+        var reader = scope.ServiceProvider.GetRequiredService<ICamt053StatementReader>();
+        var parser = scope.ServiceProvider.GetRequiredService<ICamt053Parser>();
+        var notifier = scope.ServiceProvider.GetService<ITransactionNotifier>();
+
         var authorized = await repository.GetByStatusAsync(TransactionStatus.Authorized, ct);
         if (authorized.Count == 0) return;
 
-        var camtXml = BuildSimulatedCamt053(authorized);
-        var doc = XDocument.Parse(camtXml);
-        var ns = XNamespace.Get("urn:iso:std:iso:20022:tech:xsd:camt.053.001.08");
-
-        foreach (var entry in doc.Descendants(ns + "Ntry"))
+        var statements = await reader.ReadPendingStatementsAsync(ct);
+        if (statements.Count == 0 && _settings.Camt053.UseSimulatedStatementsWhenEmpty)
         {
-            var endToEndId = entry.Descendants(ns + "EndToEndId").FirstOrDefault()?.Value;
-            var amountEl = entry.Descendants(ns + "Amt").FirstOrDefault();
-            if (endToEndId is null || amountEl is null) continue;
+            statements = [new Camt053Statement("simulated.xml", BuildSimulatedCamt053(authorized))];
+        }
 
-            if (!decimal.TryParse(amountEl.Value, out var bankAmount)) continue;
-
-            var transaction = authorized.FirstOrDefault(t => t.EndToEndId == endToEndId);
-            if (transaction is null) continue;
-
-            if (transaction.Amount != bankAmount)
+        foreach (var statement in statements)
+        {
+            var entries = parser.ParseEntries(statement.XmlContent);
+            foreach (var entry in entries)
             {
-                _logger.LogWarning("Montante divergente E2E={E2E} esperado={Expected} banco={Bank}",
-                    endToEndId, transaction.Amount, bankAmount);
-                continue;
+                var transaction = authorized.FirstOrDefault(t => t.EndToEndId == entry.EndToEndId);
+                if (transaction is null) continue;
+
+                if (transaction.Amount != entry.Amount)
+                {
+                    _logger.LogWarning(
+                        "Montante divergente E2E={E2E} esperado={Expected} banco={Bank}",
+                        entry.EndToEndId, transaction.Amount, entry.Amount);
+                    continue;
+                }
+
+                var fee = Math.Round(transaction.Amount * (_settings.HubProcessingFeePercent / 100m), 2);
+                var net = transaction.Amount - fee;
+                transaction.Settle(net, fee);
+                await repository.UpdateAsync(transaction, ct);
+
+                if (notifier is not null)
+                    await notifier.NotifyUpdatedAsync(transaction, ct);
+
+                _logger.LogInformation(
+                    "Liquidação ISO 20022 ficheiro={File} E2E={E2E} bruto={Gross} taxa={Fee} líquido={Net}",
+                    statement.FileName, entry.EndToEndId, transaction.Amount, fee, net);
             }
 
-            var fee = Math.Round(transaction.Amount * (_settings.HubProcessingFeePercent / 100m), 2);
-            var net = transaction.Amount - fee;
-            transaction.Settle(net, fee);
-            await repository.UpdateAsync(transaction, ct);
-
-            _logger.LogInformation(
-                "Liquidação ISO 20022 E2E={E2E} bruto={Gross} taxa={Fee} líquido={Net}",
-                endToEndId, transaction.Amount, fee, net);
+            if (statement.FileName != "simulated.xml")
+                await reader.MarkAsProcessedAsync(statement.FileName, ct);
         }
     }
 

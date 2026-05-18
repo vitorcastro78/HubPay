@@ -170,7 +170,10 @@ Infrastructure (implementa interfaces do Domain)
 | GET | `/api/v1/dashboard/stats` | Métricas do dashboard |
 | GET | `/api/v1/transactions/{id}/antifraud` | Relatório da IA |
 | POST | `/api/v1/transactions/{id}/refund` | Reembolso |
-| POST | `/api/v1/webhooks/{scheme}` | Webhook por esquema |
+| POST | `/api/v1/auth/token` | Obter JWT (dev/sandbox) |
+| POST | `/api/v1/webhooks/{scheme}` | Webhook por esquema (HMAC) |
+| GET | `/health`, `/health/ready` | Health checks |
+| WS | `/hubs/transactions` | SignalR tempo real |
 
 ### 4.5 HubPay.Frontend.Blazor
 
@@ -184,6 +187,20 @@ Infrastructure (implementa interfaces do Domain)
 
 - [x] `docker-compose.yml` com PostgreSQL 16 e Redis 7
 - [x] Solução compila sem erros (`dotnet build HubPay.sln`)
+
+### 4.7 Melhorias recentes (produção-readiness)
+
+- [x] **Migrations EF Core** — `InitialCreate` em `Persistence/Migrations`, `Database.MigrateAsync()` no startup
+- [x] **Modelo ONNX real** — `tools/HubPay.OnnxGenerator` (ML.NET) + `src/HubPay.WebApi/Models/antifraud.onnx`
+- [x] **JWT** — `POST /api/v1/auth/token`, endpoints protegidos com `[Authorize]`
+- [x] **Webhooks assinados** — HMAC-SHA256 via header `X-HubPay-Signature`
+- [x] **camt.053 por ficheiro** — leitura de `data/camt053/inbound/*.xml`, arquivo em `processed/`
+- [x] **OpenTelemetry** — traces/metrics (console exporter) + `hubpay.antifraud.latency_ms`
+- [x] **Health checks** — `/health` e `/health/ready` (PostgreSQL, Redis, ONNX)
+- [x] **SignalR** — hub `/hubs/transactions`, badge Live no monitor Blazor
+- [x] **Testes** — `tests/HubPay.Tests.Unit` (10 testes), `tests/HubPay.Tests.Integration`
+- [x] **Benchmarks** — `tests/HubPay.Benchmarks` (BenchmarkDotNet)
+- [x] **CI/CD** — `.github/workflows/ci.yml`
 
 ---
 
@@ -217,10 +234,22 @@ dotnet run --project src/HubPay.Frontend.Blazor
 | Blazor | conforme `launchSettings.json` do projeto WASM |
 | Health | `https://localhost:7239/health` |
 
+### Autenticação JWT
+
+```http
+POST https://localhost:7239/api/v1/auth/token
+Content-Type: application/json
+
+{ "merchantId": "MERCH-PT-001" }
+```
+
+Use o `accessToken` retornado no header `Authorization: Bearer {token}` em todos os endpoints `/api/v1/*` (exceto webhooks).
+
 ### Exemplo de pedido de pagamento
 
 ```http
 POST https://localhost:7239/api/v1/payments
+Authorization: Bearer {token}
 X-Idempotency-Key: chave-unica-001
 Content-Type: application/json
 
@@ -254,12 +283,12 @@ Itens necessários ou recomendados para **produção** ou para cumprir integralm
 
 | Item | Estado | Notas |
 |------|--------|-------|
-| Modelo ONNX real (`Models/antifraud.onnx`) | ❌ Pendente | Sem ficheiro, usa modelo matemático + fallback; é preciso treinar/exportar ONNX com input `input` shape `[1,4]` |
-| Migrations EF Core | ❌ Pendente | Hoje usa `EnsureCreatedAsync`; em produção usar `dotnet ef migrations` |
-| Autenticação / autorização (API + Blazor) | ❌ Pendente | Sem JWT, API keys de merchant ou OAuth2 |
+| Modelo ONNX real (`Models/antifraud.onnx`) | ✅ Implementado | Gerado via `tools/HubPay.OnnxGenerator`; retreinar com dados reais |
+| Migrations EF Core | ✅ Implementado | `Persistence/Migrations/InitialCreate` + migrate no startup |
+| Autenticação / autorização (API + Blazor) | ⚠️ Parcial | JWT dev token; falta OAuth2/API keys por merchant |
 | HTTPS e secrets | ❌ Pendente | Chaves em Azure Key Vault / User Secrets; não commitar credenciais reais |
-| Testes automatizados | ❌ Pendente | Unitários (domínio, mod97, estados), integração (API + Testcontainers PostgreSQL/Redis) |
-| CI/CD | ❌ Pendente | Pipeline build, test, deploy |
+| Testes automatizados | ⚠️ Parcial | 10 unit + 2 integration; expandir cobertura |
+| CI/CD | ✅ Implementado | GitHub Actions; falta deploy automatizado |
 
 ### 6.2 Integrações reais com PSPs
 
@@ -267,15 +296,15 @@ Itens necessários ou recomendados para **produção** ou para cumprir integralm
 |------|--------|-------|
 | SIBS (MB WAY / Multibanco) | ⚠️ Simulado | HTTP com fallback local em erro de rede |
 | Bizum, Wero, iDEAL, etc. | ⚠️ Simulado | Payloads JSON de exemplo; sem certificados mTLS reais |
-| Assinatura / validação de webhooks | ❌ Pendente | HMAC ou certificados por PSP |
+| Assinatura / validação de webhooks | ✅ Implementado | HMAC-SHA256 por esquema; falta certificados mTLS por PSP |
 | Idempotência no lado do PSP | ❌ Pendente | Alinhar com especificações de cada adquirente |
 
 ### 6.3 Anti-fraude e compliance
 
 | Item | Estado | Notas |
 |------|--------|-------|
-| Benchmark de latência (&lt;15 ms / &lt;45 ms) | ❌ Pendente | Testes de carga (k6, NBomber) e métricas APM |
-| Application Insights / OpenTelemetry | ❌ Pendente | Traces por transação, latência do ONNX |
+| Benchmark de latência (&lt;15 ms / &lt;45 ms) | ⚠️ Parcial | Projeto BenchmarkDotNet criado; executar com Redis ativo |
+| Application Insights / OpenTelemetry | ⚠️ Parcial | OTEL console; configurar export para App Insights/Azure Monitor |
 | Listas de sanções / PEP (AML) | ❌ Pendente | Não incluído no scope atual |
 | Auditoria regulatória (TRA) persistente | ⚠️ Parcial | Redis 7 dias; considerar tabela dedicada em PostgreSQL |
 | 3D Secure / PSD2 SCA real | ⚠️ Parcial | Payload de desafio simulado; sem integração ACS real |
@@ -284,7 +313,7 @@ Itens necessários ou recomendados para **produção** ou para cumprir integralm
 
 | Item | Estado | Notas |
 |------|--------|-------|
-| Ingestão real de ficheiros camt.053 | ❌ Pendente | Hoje gera XML simulado em memória |
+| Ingestão real de ficheiros camt.053 | ⚠️ Parcial | Leitura de pasta `data/camt053/inbound`; falta SFTP/bucket bancário |
 | SFTP / bucket para extratos bancários | ❌ Pendente | — |
 | Relatórios de disputas / chargebacks | ❌ Pendente | — |
 | Multi-tenant (vários merchants) | ⚠️ Parcial | `MerchantId` existe; sem isolamento por tenant na BD |
@@ -295,7 +324,7 @@ Itens necessários ou recomendados para **produção** ou para cumprir integralm
 |------|--------|-------|
 | AdminLTE local (offline) | ⚠️ CDN | Dependência de rede; opcional empacotar assets |
 | Gráficos avançados (Chart.js / ApexCharts) | ⚠️ Básico | Barras CSS simples no dashboard |
-| Atualização em tempo real (SignalR) | ❌ Pendente | Monitor transacional não é live ainda |
+| Atualização em tempo real (SignalR) | ✅ Implementado | Hub + cliente Blazor com badge Live |
 | Internacionalização (i18n) | ❌ Pendente | UI em português fixo |
 | Formulário de criação de pagamento na UI | ❌ Pendente | Apenas leitura via API externa |
 
@@ -360,12 +389,13 @@ src/HubPay.Frontend.Blazor/
 |------|-------------------|
 | Arquitetura e projetos | ✅ Completo |
 | Domínio e CQRS | ✅ Completo |
-| API e middlewares | ✅ Completo (sem auth) |
-| Anti-fraude inline | ⚠️ Funcional com fallback (sem ONNX treinado) |
+| API e middlewares | ✅ Completo (JWT + idempotência) |
+| Anti-fraude inline | ✅ ONNX + fallback + métricas |
 | Esquemas de pagamento EU | ⚠️ Estrutura completa, integrações simuladas |
-| Reconciliação ISO 20022 | ⚠️ Motor simulado |
-| Dashboard Blazor | ✅ MVP operacional |
-| Produção / compliance | ❌ Maioria pendente |
+| Reconciliação ISO 20022 | ⚠️ Ficheiros XML + fallback simulado |
+| Dashboard Blazor | ✅ MVP + SignalR |
+| Testes e CI | ⚠️ Base implementada |
+| Produção / compliance | ⚠️ Requer hardening e PSP reais |
 
 A solução está **pronta para desenvolvimento e demonstração end-to-end** (API + dashboard + Docker), mas **não está pronta para produção regulada** sem concluir os itens da secção 6.
 

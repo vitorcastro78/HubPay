@@ -1,8 +1,11 @@
 using HubPay.Application.Commands;
 using HubPay.Application.DTOs;
 using HubPay.Application.Queries;
+using HubPay.Domain.Configuration;
 using HubPay.Domain.Interfaces;
+using HubPay.Infrastructure.Telemetry;
 using MediatR;
+using Microsoft.Extensions.Options;
 
 namespace HubPay.WebApi.Endpoints;
 
@@ -10,11 +13,14 @@ public static class PaymentEndpoints
 {
     public static void MapPaymentEndpoints(this WebApplication app)
     {
-        var api = app.MapGroup("/api/v1").WithTags("HubPay");
+        var api = app.MapGroup("/api/v1")
+            .WithTags("HubPay")
+            .RequireAuthorization();
 
         api.MapPost("/payments", async (CreatePaymentRequest request, IMediator mediator, CancellationToken ct) =>
         {
             var result = await mediator.Send(new CreatePaymentCommand(request), ct);
+            HubPayMetrics.PaymentsCreated.Add(1);
             return Results.Ok(result);
         })
         .WithName("CreatePayment")
@@ -51,19 +57,35 @@ public static class PaymentEndpoints
         })
         .WithName("RefundPayment");
 
-        api.MapPost("/webhooks/{scheme}", async (
+        app.MapPost("/api/v1/webhooks/{scheme}", async (
             string scheme,
             HttpRequest request,
             IPaymentStrategyFactory factory,
+            IWebhookSignatureValidator signatureValidator,
+            IOptions<HubPaySettings> options,
             CancellationToken ct) =>
         {
-            using var reader = new StreamReader(request.Body);
+            request.EnableBuffering();
+            using var reader = new StreamReader(request.Body, leaveOpen: true);
             var payload = await reader.ReadToEndAsync(ct);
+            request.Body.Position = 0;
+
+            var headerName = options.Value.Webhooks.SignatureHeaderName;
+            var signature = request.Headers[headerName].FirstOrDefault();
+
+            if (!signatureValidator.Validate(scheme, payload, signature))
+            {
+                return Results.Problem(
+                    title: "Assinatura de webhook inválida",
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
             var headers = request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString());
             var strategy = factory.Resolve(scheme);
             var result = await strategy.HandleWebhookAsync(payload, headers, ct);
             return Results.Ok(result);
         })
-        .WithName("PaymentWebhook");
+        .WithName("PaymentWebhook")
+        .AllowAnonymous();
     }
 }

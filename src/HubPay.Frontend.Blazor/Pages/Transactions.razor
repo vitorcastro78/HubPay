@@ -2,11 +2,18 @@
 @using HubPay.Application.DTOs
 @using HubPay.Application.Queries
 @inject HubPay.Frontend.Blazor.Services.HubPayApiClient Api
+@inject HubPay.Frontend.Blazor.Services.TransactionHubClient HubClient
 @inject NavigationManager Nav
+@implements IAsyncDisposable
 
 <PageTitle>Transações — HubPay</PageTitle>
 
-<h1 class="mb-4">Monitor Transacional Europeu</h1>
+<h1 class="mb-4">Monitor Transacional Europeu
+    @if (_liveConnected)
+    {
+        <span class="badge badge-success ml-2"><i class="fas fa-circle"></i> Live</span>
+    }
+</h1>
 
 @if (_loading)
 {
@@ -65,7 +72,38 @@ else
     private int _totalPages = 1;
     private const int PageSize = 15;
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        HubClient.OnTransactionUpdated += OnLiveUpdate;
+        try
+        {
+            await HubClient.ConnectAsync();
+            _liveConnected = true;
+        }
+        catch
+        {
+            _liveConnected = false;
+        }
+        await LoadAsync();
+    }
+
+    private void OnLiveUpdate(TransactionDto dto)
+    {
+        var index = _items.FindIndex(t => t.Id == dto.Id);
+        if (index >= 0)
+            _items[index] = dto;
+        else
+            _items.Insert(0, dto);
+        InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        HubClient.OnTransactionUpdated -= OnLiveUpdate;
+        await HubClient.DisposeAsync();
+    }
+
+    private bool _liveConnected;
 
     private async Task LoadAsync()
     {

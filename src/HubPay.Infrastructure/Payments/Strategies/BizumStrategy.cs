@@ -1,6 +1,7 @@
 using System.Text.Json;
 using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
+using HubPay.Domain.Exceptions;
 using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
@@ -10,15 +11,19 @@ namespace HubPay.Infrastructure.Payments.Strategies;
 
 public sealed class BizumStrategy : PaymentStrategyBase
 {
+    private readonly BizumApiSettings _settings;
+    private readonly PspApiClient _api;
+
     public BizumStrategy(
         HttpClient httpClient,
         ILogger<BizumStrategy> logger,
         ITransactionRepository repository,
         IOptions<HubPaySettings> options) : base(httpClient, logger, repository)
     {
-        var settings = options.Value.Bizum;
-        HttpClient.BaseAddress = new Uri(settings.BaseUrl);
-        HttpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {settings.ApiKey}");
+        _settings = options.Value.Bizum;
+        _api = new PspApiClient(httpClient, _settings, SchemeName, logger);
+        httpClient.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.ApiKey);
     }
 
     public override string SchemeName => "BIZUM";
@@ -28,22 +33,48 @@ public sealed class BizumStrategy : PaymentStrategyBase
         var payload = new
         {
             orderId = transaction.EndToEndId,
-            amount = transaction.Amount,
-            currency = "EUR",
+            amount = new { value = transaction.Amount, currency = "EUR" },
             buyerPhone = "+34600000000",
-            notificationUrl = "https://hubpay.eu/webhooks/bizum"
+            notificationUrl = PspStrategyHelper.WebhookUrl(_settings, SchemeName)
         };
 
         try
         {
-            await PostJsonAsync<object, JsonElement>("/payments/init", payload, ct);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Bizum simulação local");
-        }
+            var response = await _api.PostAsync(_settings.PaymentInitPath, payload, ct);
+            var externalRef = PspStrategyHelper.ReadString(response, "paymentId", "id") ?? transaction.Id.ToString();
+            var redirectUrl = PspStrategyHelper.ReadString(response, "redirectUrl", "confirmationUrl")
+                              ?? "https://bizum.es/app/confirm";
 
-        return new PaymentResult(true, $"BZM-{transaction.Id:N}"[..20], "Pending",
-            "https://bizum.es/app/confirm", JsonSerializer.Serialize(payload));
+            Logger.LogInformation("Bizum iniciado ref={Ref} mTLS={Mtls}", externalRef, _settings.MutualTls.Enabled);
+            return new PaymentResult(true, externalRef, "Pending", redirectUrl, JsonSerializer.Serialize(payload));
+        }
+        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        {
+            return PspStrategyHelper.BuildFallback(
+                transaction, SchemeName, "Pending", "https://bizum.es/app/confirm", payload, Logger, ex);
+        }
+    }
+
+    public override async Task<RefundResult> RefundAsync(Guid transactionId, decimal amount, CancellationToken ct)
+    {
+        var transaction = await Repository.GetByIdAsync(transactionId, ct);
+        if (transaction is null)
+            return new RefundResult(false, string.Empty, amount, "NOT_FOUND");
+
+        if (string.IsNullOrWhiteSpace(transaction.ExternalReference))
+            return await base.RefundAsync(transactionId, amount, ct);
+
+        var path = _settings.RefundPath.Replace("{paymentId}", transaction.ExternalReference, StringComparison.Ordinal);
+        try
+        {
+            var response = await _api.PostAsync(path, new { amount }, ct);
+            var refundId = PspStrategyHelper.ReadString(response, "refundId", "id") ?? $"RF-BZM-{Guid.NewGuid():N}"[..24];
+            return new RefundResult(true, refundId, amount, "REFUNDED");
+        }
+        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        {
+            Logger.LogWarning(ex, "Reembolso Bizum em fallback simulado");
+            return await base.RefundAsync(transactionId, amount, ct);
+        }
     }
 }

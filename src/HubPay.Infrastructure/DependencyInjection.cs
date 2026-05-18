@@ -2,7 +2,10 @@ using HubPay.Domain.Configuration;
 using HubPay.Domain.Interfaces;
 using HubPay.Infrastructure.AntiFraud;
 using HubPay.Infrastructure.Clearing;
+using HubPay.Infrastructure.Notifications;
+using HubPay.Infrastructure.Webhooks;
 using HubPay.Infrastructure.Payments;
+using HubPay.Infrastructure.Payments.MutualTls;
 using HubPay.Infrastructure.Payments.Strategies;
 using HubPay.Infrastructure.Persistence;
 using HubPay.Infrastructure.Redis;
@@ -28,38 +31,54 @@ public static class DependencyInjection
             options.UseNpgsql(settings.ConnectionString));
 
         services.AddSingleton<IConnectionMultiplexer>(_ =>
-            ConnectionMultiplexer.Connect(settings.RedisConnectionString));
+        {
+            var redisOptions = ConfigurationOptions.Parse(settings.RedisConnectionString);
+            redisOptions.AbortOnConnectFail = false;
+            return ConnectionMultiplexer.Connect(redisOptions);
+        });
 
         services.AddScoped<ITransactionRepository, TransactionRepository>();
         services.AddSingleton<RedisFeatureStore>();
-        services.AddScoped<IAntiFraudAuditStore, RedisAntiFraudAuditStore>();
+        services.AddSingleton<IAntiFraudAuditStore, RedisAntiFraudAuditStore>();
         services.AddSingleton<IAntiFraudEngine, AntiFraudEngine>();
 
-        RegisterPaymentStrategy<MBWayStrategy>(services, "MBWay");
-        RegisterPaymentStrategy<MultibancoStrategy>(services, "Multibanco");
-        RegisterPaymentStrategy<BizumStrategy>(services, "Bizum");
-        RegisterPaymentStrategy<Euro6000Strategy>(services, "Euro6000");
-        RegisterPaymentStrategy<WeroStrategy>(services, "Wero");
-        RegisterPaymentStrategy<CartesBancairesStrategy>(services, "CartesBancaires");
-        RegisterPaymentStrategy<IDealStrategy>(services, "IDeal");
-        RegisterPaymentStrategy<BancontactStrategy>(services, "Bancontact");
-        RegisterPaymentStrategy<BancomatPayStrategy>(services, "BancomatPay");
-        RegisterPaymentStrategy<SwishStrategy>(services, "Swish");
-        RegisterPaymentStrategy<VippsMobilePayStrategy>(services, "VippsMobilePay");
+        services.AddSingleton<MutualTlsCertificateLoader>();
+        services.AddSingleton<MutualTlsHttpClientHandlerFactory>();
+
+        RegisterPspClient<MBWayStrategy>(services, s => s.Sibs, "SIBS");
+        RegisterPspClient<MultibancoStrategy>(services, s => s.Sibs, "SIBS");
+        RegisterPspClient<BizumStrategy>(services, s => s.Bizum, "Bizum");
+        RegisterPspClient<Euro6000Strategy>(services, s => s.Euro6000, "Euro6000");
+        RegisterPspClient<WeroStrategy>(services, s => s.Wero, "Wero");
+        RegisterPspClient<CartesBancairesStrategy>(services, s => s.CartesBancaires, "CartesBancaires");
+        RegisterPspClient<IDealStrategy>(services, s => s.Ideal, "iDEAL");
+        RegisterPspClient<BancontactStrategy>(services, s => s.Bancontact, "Bancontact");
+        RegisterPspClient<BancomatPayStrategy>(services, s => s.BancomatPay, "BancomatPay");
+        RegisterPspClient<SwishStrategy>(services, s => s.Swish, "Swish");
+        RegisterPspClient<VippsMobilePayStrategy>(services, s => s.VippsMobilePay, "VippsMobilePay");
 
         services.AddScoped<IPaymentStrategyFactory, PaymentStrategyFactory>();
+        services.AddSingleton<ICamt053Parser, Camt053Parser>();
+        services.AddSingleton<ICamt053StatementReader, FileCamt053StatementReader>();
+        services.AddSingleton<IWebhookSignatureValidator, HmacWebhookSignatureValidator>();
+        services.AddScoped<ITransactionNotifier, NullTransactionNotifier>();
         services.AddHostedService<FinancialClearingEngine>();
 
         return services;
     }
 
-    private static void RegisterPaymentStrategy<T>(IServiceCollection services, string name)
-        where T : class, IPaymentStrategy
+    private static void RegisterPspClient<TStrategy>(
+        IServiceCollection services,
+        Func<HubPaySettings, PspEndpointSettings> settingsSelector,
+        string pspName)
+        where TStrategy : class, IPaymentStrategy
     {
-        services.AddHttpClient<T>(name)
+        services.AddHttpClient<TStrategy>(typeof(TStrategy).Name)
+            .ConfigurePspClient(settingsSelector, pspName)
             .AddPolicyHandler(GetRetryPolicy())
             .AddPolicyHandler(GetCircuitBreakerPolicy());
-        services.AddScoped<IPaymentStrategy, T>(sp => sp.GetRequiredService<T>());
+
+        services.AddScoped<IPaymentStrategy, TStrategy>(sp => sp.GetRequiredService<TStrategy>());
     }
 
     private static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy() =>

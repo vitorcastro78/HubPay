@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using HubPay.Infrastructure.Telemetry;
 using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
 using HubPay.Domain.Interfaces;
@@ -99,6 +100,7 @@ public sealed class AntiFraudEngine : IAntiFraudEngine, IDisposable
         }
 
         sw.Stop();
+        HubPayMetrics.AntiFraudLatencyMs.Record(sw.Elapsed.TotalMilliseconds);
         var scaStatus = ResolveScaStatus(score);
         var result = new AntiFraudEvaluationResult(score, scaStatus, sw.ElapsedMilliseconds, features, usedFallback);
         await _auditStore.SaveEvaluationAsync(transaction.Id, result, ct);
@@ -115,14 +117,17 @@ public sealed class AntiFraudEngine : IAntiFraudEngine, IDisposable
             input[0, 2] = features.DeviceTransactionsLast5Min / 10f;
             input[0, 3] = features.EmailCountriesLastHour / 5f;
 
+            var inputName = _session.InputMetadata.Keys.First();
             var inputs = new List<NamedOnnxValue>
             {
-                NamedOnnxValue.CreateFromTensor("input", input)
+                NamedOnnxValue.CreateFromTensor(inputName, input)
             };
 
             using var results = _session.Run(inputs);
-            var output = results.First().AsEnumerable<float>().First();
-            return Math.Clamp((decimal)output * 100m, 0m, 100m);
+            var outputTensor = results.First().AsEnumerable<float>().ToArray();
+            var output = outputTensor.Length > 0 ? outputTensor[0] : 0f;
+            var normalized = output is >= 0f and <= 1f ? output : output / 100f;
+            return Math.Clamp((decimal)normalized * 100m, 0m, 100m);
         }
 
         return RunMathematicalModel(features);
