@@ -39,6 +39,7 @@ public sealed class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentC
             req.CustomerIP,
             req.DeviceFingerprint,
             req.CustomerEmail,
+            req.PhoneNumber,
             req.CountryCode);
 
         await _repository.AddAsync(transaction, ct);
@@ -63,38 +64,55 @@ public sealed class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentC
         object? challengePayload = null;
         string? redirectUrl = null;
         string? externalRef = null;
+        MultibancoDetailsDto? multibanco = null;
+        IdealDetailsDto? ideal = null;
 
-        if (transaction.Status == TransactionStatus.Authorized ||
-            transaction.Status == TransactionStatus.Pending)
+        if (transaction.Status is TransactionStatus.Authorized or TransactionStatus.Pending)
         {
             var strategy = _strategyFactory.Resolve(transaction.PaymentScheme);
             var paymentResult = await strategy.ProcessAsync(transaction, ct);
 
-            if (paymentResult.Success)
+            if (!paymentResult.Success)
+                throw new BusinessRuleException($"PSP {transaction.PaymentScheme} recusou o pagamento.");
+
+            transaction.MarkPending(paymentResult.ExternalReference);
+
+            if (paymentResult.SchemeDetails?.ThreeDsChallenge is not null)
+                challengePayload = paymentResult.SchemeDetails.ThreeDsChallenge;
+            else if (fraudResult.ScaStatus != "TRA" && transaction.Status == TransactionStatus.Pending)
             {
-                if (transaction.Status == TransactionStatus.Authorized)
-                    transaction.MarkPending(paymentResult.ExternalReference);
-                else
-                    transaction.MarkPending(paymentResult.ExternalReference);
-
-                if (fraudResult.ScaStatus != "TRA" && transaction.Status == TransactionStatus.Pending)
+                challengePayload = new
                 {
-                    challengePayload = new
-                    {
-                        type = "3DS_CHALLENGE",
-                        acsUrl = paymentResult.RedirectUrl ?? "https://acs.hubpay.eu/challenge",
-                        transactionId = transaction.Id
-                    };
-                }
-                else if (transaction.Status == TransactionStatus.Pending && fraudResult.ScaStatus == "TRA")
-                {
-                    transaction.Authorize(paymentResult.ExternalReference);
-                }
-
-                redirectUrl = paymentResult.RedirectUrl;
-                externalRef = paymentResult.ExternalReference;
-                await _repository.UpdateAsync(transaction, ct);
+                    type = "3DS_CHALLENGE",
+                    acsUrl = paymentResult.RedirectUrl ?? "https://acs.hubpay.eu/challenge",
+                    transactionId = transaction.Id
+                };
             }
+            else if (fraudResult.ScaStatus == "TRA")
+            {
+                transaction.Authorize(paymentResult.ExternalReference);
+            }
+
+            if (paymentResult.PayloadJson is not null)
+                transaction.SetPspMetadata(paymentResult.PayloadJson);
+
+            redirectUrl = paymentResult.RedirectUrl;
+            externalRef = paymentResult.ExternalReference;
+
+            if (paymentResult.SchemeDetails?.MultibancoEntity is not null)
+            {
+                multibanco = new MultibancoDetailsDto(
+                    paymentResult.SchemeDetails.MultibancoEntity,
+                    paymentResult.SchemeDetails.MultibancoReference!,
+                    paymentResult.SchemeDetails.MultibancoDueDate!.Value);
+            }
+
+            if (paymentResult.SchemeDetails?.IdealQrPayload is not null)
+            {
+                ideal = new IdealDetailsDto(paymentResult.SchemeDetails.IdealQrPayload, redirectUrl);
+            }
+
+            await _repository.UpdateAsync(transaction, ct);
         }
 
         await _notifier.NotifyUpdatedAsync(transaction, ct);
@@ -107,6 +125,8 @@ public sealed class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentC
             redirectUrl,
             externalRef,
             challengePayload,
-            transaction.AntiFraudElapsedMs);
+            transaction.AntiFraudElapsedMs,
+            multibanco,
+            ideal);
     }
 }

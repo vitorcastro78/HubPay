@@ -20,7 +20,19 @@ public sealed class WebApiFactory : WebApplicationFactory<Program>
             {
                 ["HubPay:ApplyMigrationsOnStartup"] = "false",
                 ["HubPay:RedisConnectionString"] = "localhost:6379,abortConnect=false",
-                ["HubPay:ClearingIntervalSeconds"] = "3600"
+                ["HubPay:ClearingIntervalSeconds"] = "3600",
+                ["HubPay:RequireMutualTlsInProduction"] = "false",
+                ["HubPay:Sibs:EnableSimulationFallback"] = "true",
+                ["HubPay:Sibs:MutualTls:Enabled"] = "false",
+                ["HubPay:Bizum:EnableSimulationFallback"] = "true",
+                ["HubPay:Wero:EnableSimulationFallback"] = "true",
+                ["HubPay:CartesBancaires:EnableSimulationFallback"] = "true",
+                ["HubPay:Ideal:EnableSimulationFallback"] = "true",
+                ["HubPay:Bancontact:EnableSimulationFallback"] = "true",
+                ["HubPay:Euro6000:EnableSimulationFallback"] = "true",
+                ["HubPay:BancomatPay:EnableSimulationFallback"] = "true",
+                ["HubPay:Swish:EnableSimulationFallback"] = "true",
+                ["HubPay:VippsMobilePay:EnableSimulationFallback"] = "true"
             });
         });
 

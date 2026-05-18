@@ -44,6 +44,17 @@ public sealed class ExceptionHandlingMiddleware
             };
             await WriteProblemAsync(context, problem);
         }
+        catch (PspIntegrationException ex)
+        {
+            var problem = new ProblemDetails
+            {
+                Status = ex.HttpStatusCode ?? StatusCodes.Status502BadGateway,
+                Title = $"Falha na integração PSP ({ex.Scheme})",
+                Detail = ex.Message,
+                Type = "https://tools.ietf.org/html/rfc7807"
+            };
+            await WriteProblemAsync(context, problem);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erro não tratado");

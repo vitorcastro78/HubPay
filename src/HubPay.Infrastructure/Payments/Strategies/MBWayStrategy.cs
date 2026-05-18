@@ -4,6 +4,7 @@ using HubPay.Domain.Entities;
 using HubPay.Domain.Exceptions;
 using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
+using HubPay.Infrastructure.Payments.Webhooks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -28,11 +29,14 @@ public sealed class MBWayStrategy : PaymentStrategyBase
 
     public override async Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
     {
+        PspStrategyHelper.EnsureProductionReady(_settings, SchemeName);
+        var phone = PspPhoneValidator.RequirePhone(transaction.CustomerPhone, SchemeName);
+
         var payload = new
         {
             merchantTransactionId = transaction.Id.ToString(),
             amount = new { value = transaction.Amount, currency = transaction.Currency },
-            customer = new { email = transaction.CustomerEmail },
+            customer = new { email = transaction.CustomerEmail, mobilePhone = phone },
             paymentMethod = "MBWAY",
             callbackUrl = PspStrategyHelper.WebhookUrl(_settings, SchemeName)
         };
@@ -44,14 +48,20 @@ public sealed class MBWayStrategy : PaymentStrategyBase
                               ?? transaction.Id.ToString();
             var redirectUrl = PspStrategyHelper.ReadString(response, "redirectUrl", "paymentUrl");
 
-            Logger.LogInformation("MB WAY SIBS iniciado ref={Ref} mTLS={Mtls}", externalRef, _settings.MutualTls.Enabled);
+            Logger.LogInformation("MB WAY SIBS iniciado ref={Ref} phone={Phone}", externalRef, phone);
             return new PaymentResult(true, externalRef, "Pending", redirectUrl, JsonSerializer.Serialize(payload));
         }
         catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
         {
-            return PspStrategyHelper.BuildFallback(transaction, SchemeName, "Pending", null, payload, Logger, ex);
+            return PspStrategyHelper.BuildFallback(transaction, SchemeName, "Pending", null, payload, null, Logger, ex);
         }
     }
+
+    public override Task<WebhookResult> HandleWebhookAsync(
+        string payload, Dictionary<string, string> headers, CancellationToken ct) =>
+        PspWebhookProcessor.ProcessAsync(
+            SchemeName, payload, Repository, Logger,
+            root => PspJson.ReadString(root, "paymentId", "id"), ct);
 
     public override async Task<RefundResult> RefundAsync(Guid transactionId, decimal amount, CancellationToken ct)
     {

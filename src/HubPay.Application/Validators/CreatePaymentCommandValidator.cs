@@ -11,6 +11,8 @@ public sealed class CreatePaymentCommandValidator : AbstractValidator<CreatePaym
         "IDEAL", "BANCONTACT", "BANCOMATPAY", "SWISH", "VIPPSMOBILEPAY"
     ];
 
+    private static readonly string[] PhoneRequiredSchemes = ["MBWAY", "BIZUM", "BANCOMATPAY"];
+
     public CreatePaymentCommandValidator()
     {
         RuleFor(x => x.Request.MerchantId).NotEmpty().MaximumLength(64);
@@ -24,5 +26,11 @@ public sealed class CreatePaymentCommandValidator : AbstractValidator<CreatePaym
         RuleFor(x => x.Request.CustomerIP).NotEmpty();
         RuleFor(x => x.Request.DeviceFingerprint).NotEmpty();
         RuleFor(x => x.Request.CustomerEmail).NotEmpty().EmailAddress();
+
+        RuleFor(x => x.Request.PhoneNumber)
+            .NotEmpty()
+            .Matches(@"^\+[1-9]\d{7,14}$")
+            .WithMessage("Telefone E.164 obrigatório (ex: +351912345678).")
+            .When(x => PhoneRequiredSchemes.Contains(x.Request.PaymentScheme.ToUpperInvariant()));
     }
 }

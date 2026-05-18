@@ -56,6 +56,10 @@ namespace HubPay.Infrastructure.Persistence.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<string>("CustomerPhone")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<string>("CustomerIP")
                         .IsRequired()
                         .HasMaxLength(45)
@@ -88,6 +92,9 @@ namespace HubPay.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
+
+                    b.Property<string>("PspMetadataJson")
+                        .HasColumnType("jsonb");
 
                     b.Property<decimal?>("ProcessingFee")
                         .HasPrecision(18, 2)

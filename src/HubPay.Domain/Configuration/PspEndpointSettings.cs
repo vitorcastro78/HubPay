@@ -8,7 +8,7 @@ public class PspEndpointSettings
     public string MerchantId { get; set; } = string.Empty;
     public string WebhookBaseUrl { get; set; } = "https://api.hubpay.eu";
     public int TimeoutSeconds { get; set; } = 30;
-    public bool EnableSimulationFallback { get; set; } = true;
+    public bool EnableSimulationFallback { get; set; } = false;
     public MutualTlsSettings MutualTls { get; set; } = new();
 }
 

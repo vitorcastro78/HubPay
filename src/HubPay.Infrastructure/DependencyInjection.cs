@@ -63,6 +63,7 @@ public static class DependencyInjection
         services.AddSingleton<IWebhookSignatureValidator, HmacWebhookSignatureValidator>();
         services.AddScoped<ITransactionNotifier, NullTransactionNotifier>();
         services.AddHostedService<FinancialClearingEngine>();
+        services.AddHostedService<PspProductionValidator>();
 
         return services;
     }

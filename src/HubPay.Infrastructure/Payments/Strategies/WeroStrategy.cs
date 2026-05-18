@@ -4,6 +4,7 @@ using HubPay.Domain.Entities;
 using HubPay.Domain.Exceptions;
 using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
+using HubPay.Infrastructure.Payments.Webhooks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -28,11 +29,14 @@ public sealed class WeroStrategy : PaymentStrategyBase
 
     public override async Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
     {
+        PspStrategyHelper.EnsureProductionReady(_settings, SchemeName);
+        var (debtorIban, creditorIban) = _settings.ResolveAccounts(transaction.MerchantId);
+
         var instaPayRequest = new
         {
             messageType = "InstaPayRequest",
-            debtorAccount = new { iban = _settings.DebtorIban },
-            creditorAccount = new { iban = _settings.CreditorIban },
+            debtorAccount = new { iban = debtorIban },
+            creditorAccount = new { iban = creditorIban },
             instructedAmount = new { currency = transaction.Currency, amount = transaction.Amount },
             remittanceInformation = transaction.EndToEndId,
             requestedExecutionDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
@@ -44,19 +48,24 @@ public sealed class WeroStrategy : PaymentStrategyBase
         {
             var response = await _api.PostAsync(_settings.InstantPaymentPath, instaPayRequest, ct);
             var externalRef = PspStrategyHelper.ReadString(response, "paymentId", "endToEndId")
-                              ?? $"WRO-{transaction.EndToEndId}"[..24];
-            var redirectUrl = PspStrategyHelper.ReadString(response, "redirectUrl", "authorizationUrl")
-                              ?? "https://pay.wero.eu/confirm";
+                              ?? transaction.EndToEndId;
+            var redirectUrl = PspStrategyHelper.ReadString(response, "redirectUrl", "authorizationUrl");
 
-            Logger.LogInformation("Wero A2A iniciado ref={Ref} mTLS={Mtls}", externalRef, _settings.MutualTls.Enabled);
+            Logger.LogInformation("Wero A2A ref={Ref}", externalRef);
             return new PaymentResult(true, externalRef, "Pending", redirectUrl, JsonSerializer.Serialize(instaPayRequest));
         }
         catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
         {
             return PspStrategyHelper.BuildFallback(
-                transaction, SchemeName, "Pending", "https://pay.wero.eu/confirm", instaPayRequest, Logger, ex);
+                transaction, SchemeName, "Pending", "https://pay.wero.eu/confirm", instaPayRequest, null, Logger, ex);
         }
     }
+
+    public override Task<WebhookResult> HandleWebhookAsync(
+        string payload, Dictionary<string, string> headers, CancellationToken ct) =>
+        PspWebhookProcessor.ProcessAsync(
+            SchemeName, payload, Repository, Logger,
+            root => PspJson.ReadString(root, "paymentId", "endToEndId"), ct);
 
     public override async Task<RefundResult> RefundAsync(Guid transactionId, decimal amount, CancellationToken ct)
     {

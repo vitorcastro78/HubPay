@@ -16,6 +16,8 @@ public sealed class Transaction
     public string CustomerIP { get; private set; } = string.Empty;
     public string DeviceFingerprint { get; private set; } = string.Empty;
     public string CustomerEmail { get; private set; } = string.Empty;
+    public string? CustomerPhone { get; private set; }
+    public string? PspMetadataJson { get; private set; }
     public string ScaStatus { get; private set; } = string.Empty;
     public decimal AntiFraudScore { get; private set; }
     public TransactionStatus Status { get; private set; }
@@ -36,6 +38,7 @@ public sealed class Transaction
         string customerIp,
         string deviceFingerprint,
         string customerEmail,
+        string? customerPhone = null,
         string? countryCode = null)
     {
         if (amount <= 0)
@@ -54,12 +57,19 @@ public sealed class Transaction
             CustomerIP = customerIp,
             DeviceFingerprint = deviceFingerprint,
             CustomerEmail = customerEmail,
+            CustomerPhone = NormalizePhone(customerPhone),
             ScaStatus = "NONE",
             AntiFraudScore = 0m,
             Status = TransactionStatus.Created,
             CreatedAt = DateTime.UtcNow,
             CountryCode = countryCode
         };
+    }
+
+    public void SetPspMetadata(string metadataJson)
+    {
+        PspMetadataJson = metadataJson;
+        UpdatedAt = DateTime.UtcNow;
     }
 
     public void StartAntiFraudEvaluation()
@@ -131,6 +141,15 @@ public sealed class Transaction
         Status = TransactionStatus.Failed;
         UpdatedAt = DateTime.UtcNow;
         _ = reason;
+    }
+
+    private static string? NormalizePhone(string? phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone))
+            return null;
+
+        var trimmed = phone.Trim();
+        return trimmed.StartsWith('+') ? trimmed : $"+{trimmed}";
     }
 
     private void EnsureStatus(TransactionStatus expected, string message)

@@ -1,6 +1,8 @@
 using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
+using HubPay.Domain.Exceptions;
 using HubPay.Domain.Interfaces;
+using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,10 +21,15 @@ public sealed class BancomatPayStrategy : PspEndpointStrategyBase
     protected override string PaymentInitPath => "/v1/payments";
     protected override string? DefaultRedirectUrl => null;
 
-    protected override object BuildPaymentPayload(Transaction transaction) => new
+    protected override object BuildPaymentPayload(Transaction transaction)
     {
-        digitalId = transaction.CustomerEmail,
-        amount = new { value = transaction.Amount, currency = "EUR" },
-        notificationUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
-    };
+        var phone = PspPhoneValidator.RequirePhone(transaction.CustomerPhone, SchemeName);
+        return new
+        {
+            digitalId = transaction.CustomerEmail,
+            phone,
+            amount = new { value = transaction.Amount, currency = "EUR" },
+            notificationUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
+        };
+    }
 }

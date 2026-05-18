@@ -24,6 +24,8 @@ public sealed class HubPayDbContext : DbContext
             entity.Property(e => e.CustomerIP).HasMaxLength(45);
             entity.Property(e => e.DeviceFingerprint).HasMaxLength(256);
             entity.Property(e => e.CustomerEmail).HasMaxLength(256);
+            entity.Property(e => e.CustomerPhone).HasMaxLength(20);
+            entity.Property(e => e.PspMetadataJson).HasColumnType("jsonb");
             entity.Property(e => e.ScaStatus).HasMaxLength(32);
             entity.Property(e => e.AntiFraudScore).HasPrecision(5, 2);
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(32);

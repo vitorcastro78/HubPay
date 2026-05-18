@@ -17,6 +17,9 @@ public sealed class TransactionRepository : ITransactionRepository
     public async Task<Transaction?> GetByEndToEndIdAsync(string endToEndId, CancellationToken ct = default) =>
         await _db.Transactions.FirstOrDefaultAsync(t => t.EndToEndId == endToEndId, ct);
 
+    public async Task<Transaction?> GetByExternalReferenceAsync(string externalReference, CancellationToken ct = default) =>
+        await _db.Transactions.FirstOrDefaultAsync(t => t.ExternalReference == externalReference, ct);
+
     public async Task<IReadOnlyList<Transaction>> GetByStatusAsync(TransactionStatus status, CancellationToken ct = default) =>
         await _db.Transactions.Where(t => t.Status == status).ToListAsync(ct);
 

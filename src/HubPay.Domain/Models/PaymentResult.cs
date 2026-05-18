@@ -5,4 +5,5 @@ public sealed record PaymentResult(
     string ExternalReference,
     string Status,
     string? RedirectUrl,
-    string? PayloadJson);
+    string? PayloadJson,
+    PaymentSchemeDetails? SchemeDetails = null);
