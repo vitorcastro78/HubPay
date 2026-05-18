@@ -11,19 +11,26 @@ namespace HubPay.Infrastructure.Payments.Strategies;
 
 public abstract class PspEndpointStrategyBase : PaymentStrategyBase
 {
-    protected readonly PspEndpointSettings Settings;
-    protected readonly PspApiClient Api;
+    private readonly IHubPaySettingsProvider _settingsProvider;
+    private readonly Func<HubPay.Domain.Configuration.HubPaySettings, PspEndpointSettings> _settingsSelector;
 
     protected PspEndpointStrategyBase(
         HttpClient httpClient,
-        PspEndpointSettings settings,
+        IHubPaySettingsProvider settingsProvider,
+        Func<HubPay.Domain.Configuration.HubPaySettings, PspEndpointSettings> settingsSelector,
         string schemeName,
         ILogger logger,
         ITransactionRepository repository) : base(httpClient, logger, repository)
     {
-        Settings = settings;
-        Api = new PspApiClient(httpClient, settings, schemeName, logger);
+        _settingsProvider = settingsProvider;
+        _settingsSelector = settingsSelector;
+        SchemeName = schemeName;
     }
+
+    public override string SchemeName { get; }
+
+    protected PspEndpointSettings Settings => _settingsSelector(_settingsProvider.Current);
+    protected PspApiClient Api => new(HttpClient, Settings, SchemeName, Logger);
 
     protected abstract string PaymentInitPath { get; }
     protected abstract string? DefaultRedirectUrl { get; }
@@ -58,10 +65,7 @@ public abstract class PspEndpointStrategyBase : PaymentStrategyBase
         Dictionary<string, string> headers,
         CancellationToken ct) =>
         PspWebhookProcessor.ProcessAsync(
-            SchemeName,
-            payload,
-            Repository,
-            Logger,
+            SchemeName, payload, Repository, Logger,
             root => PspJson.ReadString(root, "paymentId", "id", "transactionId"),
             ct);
 

@@ -6,30 +6,29 @@ using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
 using HubPay.Infrastructure.Payments.Webhooks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
 public sealed class CartesBancairesStrategy : PaymentStrategyBase
 {
-    private readonly CartesBancairesApiSettings _settings;
-    private readonly PspApiClient _api;
+    private readonly IHubPaySettingsProvider _settingsProvider;
 
     public CartesBancairesStrategy(
         HttpClient httpClient,
         ILogger<CartesBancairesStrategy> logger,
         ITransactionRepository repository,
-        IOptions<HubPaySettings> options) : base(httpClient, logger, repository)
+        IHubPaySettingsProvider settingsProvider) : base(httpClient, logger, repository)
     {
-        _settings = options.Value.CartesBancaires;
-        _api = new PspApiClient(httpClient, _settings, SchemeName, logger);
+        _settingsProvider = settingsProvider;
     }
 
     public override string SchemeName => "CARTESBANCAIRES";
+    private CartesBancairesApiSettings Settings => _settingsProvider.Current.CartesBancaires;
+    private PspApiClient Api => new(HttpClient, Settings, SchemeName, Logger);
 
     public override async Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
     {
-        PspStrategyHelper.EnsureProductionReady(_settings, SchemeName);
+        PspStrategyHelper.EnsureProductionReady(Settings, SchemeName);
 
         var payload = new
         {
@@ -38,12 +37,12 @@ public sealed class CartesBancairesStrategy : PaymentStrategyBase
             merchantId = transaction.MerchantId,
             merchantTransactionId = transaction.Id.ToString(),
             authentication = "3DS2",
-            notificationUrl = PspStrategyHelper.WebhookUrl(_settings, SchemeName)
+            notificationUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
         };
 
         try
         {
-            var response = await _api.PostAsync(_settings.AuthorizePath, payload, ct);
+            var response = await Api.PostAsync(Settings.AuthorizePath, payload, ct);
             var externalRef = PspStrategyHelper.ReadString(response, "paymentId", "id") ?? transaction.Id.ToString();
             var acsUrl = PspStrategyHelper.ReadString(response, "acsUrl", "threeDsChallengeUrl", "redirectUrl")
                          ?? "https://acs.cartesbancaires.fr/challenge";
@@ -62,7 +61,7 @@ public sealed class CartesBancairesStrategy : PaymentStrategyBase
             Logger.LogInformation("Cartes Bancaires 3DS iniciado ref={Ref}", externalRef);
             return new PaymentResult(true, externalRef, "Pending", acsUrl, JsonSerializer.Serialize(payload), details);
         }
-        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        catch (PspIntegrationException ex) when (Settings.EnableSimulationFallback)
         {
             var fallback3Ds = new { type = "3DS_CHALLENGE", acsUrl = "https://acs.cartesbancaires.fr/challenge", transactionId = transaction.Id };
             return PspStrategyHelper.BuildFallback(
@@ -84,12 +83,12 @@ public sealed class CartesBancairesStrategy : PaymentStrategyBase
         try
         {
             using var doc = JsonDocument.Parse(payload);
-            var statusPath = _settings.ThreeDsStatusPath.Replace(
+            var statusPath = Settings.ThreeDsStatusPath.Replace(
                 "{paymentId}",
                 PspJson.ReadString(doc.RootElement, "paymentId", "id") ?? string.Empty,
                 StringComparison.Ordinal);
-            if (!string.IsNullOrWhiteSpace(statusPath) && statusPath.Contains('{') == false)
-                await _api.GetAsync(statusPath, ct);
+            if (!string.IsNullOrWhiteSpace(statusPath) && !statusPath.Contains('{'))
+                await Api.GetAsync(statusPath, ct);
         }
         catch (Exception ex)
         {

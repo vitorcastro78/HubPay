@@ -1,0 +1,112 @@
+@page "/admin/psp-merchants"
+@using HubPay.Application.DTOs.Admin
+@inject HubPay.Frontend.Blazor.Services.HubPayApiClient Api
+
+<PageTitle>Admin PSP Merchants — HubPay</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="mb-0">Configuração por Merchant</h1>
+    <a class="btn btn-primary" href="admin/psp-merchants/new">
+        <i class="fas fa-plus"></i> Novo
+    </a>
+</div>
+
+@if (!string.IsNullOrEmpty(_message))
+{
+    <div class="alert @(_error ? "alert-danger" : "alert-success")">@_message</div>
+}
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="form-inline">
+            <label class="mr-2">Filtrar scheme:</label>
+            <select class="form-control mr-2" @bind="_filterScheme">
+                <option value="">Todos</option>
+                @foreach (var s in _schemes)
+                {
+                    <option value="@s">@s</option>
+                }
+            </select>
+            <button class="btn btn-outline-primary" @onclick="LoadAsync">Filtrar</button>
+        </div>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <p><i class="fas fa-spinner fa-spin"></i> A carregar...</p>
+}
+else
+{
+    <div class="card">
+        <div class="card-header">
+            <a href="admin/psp" class="btn btn-sm btn-outline-secondary">← Provedores PSP</a>
+        </div>
+        <div class="card-body table-responsive p-0">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Scheme</th>
+                        <th>Merchant</th>
+                        <th>Atualizado</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var m in _merchants)
+                    {
+                        <tr>
+                            <td>@m.Scheme</td>
+                            <td>@m.MerchantId</td>
+                            <td>@m.UpdatedAt.ToLocalTime().ToString("g")</td>
+                            <td class="text-right">
+                                <a class="btn btn-sm btn-info" href="@($"admin/psp-merchants/{m.Scheme}/{m.MerchantId}")">Editar</a>
+                                <button class="btn btn-sm btn-danger" @onclick="() => DeleteAsync(m.Scheme, m.MerchantId)">Apagar</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    private List<PspMerchantConfigDto> _merchants = [];
+    private List<string> _schemes = ["SIBS", "WERO"];
+    private string _filterScheme = "";
+    private bool _loading = true;
+    private string? _message;
+    private bool _error;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var scheme = string.IsNullOrWhiteSpace(_filterScheme) ? null : _filterScheme;
+            _merchants = (await Api.GetPspMerchantsAsync(scheme))?.ToList() ?? [];
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task DeleteAsync(string scheme, string merchantId)
+    {
+        if (await Api.DeletePspMerchantAsync(scheme, merchantId))
+        {
+            _error = false;
+            _message = "Removido.";
+            await LoadAsync();
+        }
+        else
+        {
+            _error = true;
+            _message = "Falha ao apagar.";
+        }
+    }
+}

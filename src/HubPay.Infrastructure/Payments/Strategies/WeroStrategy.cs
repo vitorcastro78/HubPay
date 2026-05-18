@@ -6,31 +6,30 @@ using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
 using HubPay.Infrastructure.Payments.Webhooks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
 public sealed class WeroStrategy : PaymentStrategyBase
 {
-    private readonly WeroApiSettings _settings;
-    private readonly PspApiClient _api;
+    private readonly IHubPaySettingsProvider _settingsProvider;
 
     public WeroStrategy(
         HttpClient httpClient,
         ILogger<WeroStrategy> logger,
         ITransactionRepository repository,
-        IOptions<HubPaySettings> options) : base(httpClient, logger, repository)
+        IHubPaySettingsProvider settingsProvider) : base(httpClient, logger, repository)
     {
-        _settings = options.Value.Wero;
-        _api = new PspApiClient(httpClient, _settings, SchemeName, logger);
+        _settingsProvider = settingsProvider;
     }
 
     public override string SchemeName => "WERO";
+    private WeroApiSettings Settings => _settingsProvider.Current.Wero;
+    private PspApiClient Api => new(HttpClient, Settings, SchemeName, Logger);
 
     public override async Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
     {
-        PspStrategyHelper.EnsureProductionReady(_settings, SchemeName);
-        var (debtorIban, creditorIban) = _settings.ResolveAccounts(transaction.MerchantId);
+        PspStrategyHelper.EnsureProductionReady(Settings, SchemeName);
+        var (debtorIban, creditorIban) = Settings.ResolveAccounts(transaction.MerchantId);
 
         var instaPayRequest = new
         {
@@ -41,12 +40,12 @@ public sealed class WeroStrategy : PaymentStrategyBase
             remittanceInformation = transaction.EndToEndId,
             requestedExecutionDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
             clearingSystem = "SEPA_INST",
-            callbackUrl = PspStrategyHelper.WebhookUrl(_settings, SchemeName)
+            callbackUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
         };
 
         try
         {
-            var response = await _api.PostAsync(_settings.InstantPaymentPath, instaPayRequest, ct);
+            var response = await Api.PostAsync(Settings.InstantPaymentPath, instaPayRequest, ct);
             var externalRef = PspStrategyHelper.ReadString(response, "paymentId", "endToEndId")
                               ?? transaction.EndToEndId;
             var redirectUrl = PspStrategyHelper.ReadString(response, "redirectUrl", "authorizationUrl");
@@ -54,7 +53,7 @@ public sealed class WeroStrategy : PaymentStrategyBase
             Logger.LogInformation("Wero A2A ref={Ref}", externalRef);
             return new PaymentResult(true, externalRef, "Pending", redirectUrl, JsonSerializer.Serialize(instaPayRequest));
         }
-        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        catch (PspIntegrationException ex) when (Settings.EnableSimulationFallback)
         {
             return PspStrategyHelper.BuildFallback(
                 transaction, SchemeName, "Pending", "https://pay.wero.eu/confirm", instaPayRequest, null, Logger, ex);
@@ -76,14 +75,14 @@ public sealed class WeroStrategy : PaymentStrategyBase
         if (string.IsNullOrWhiteSpace(transaction.ExternalReference))
             return await base.RefundAsync(transactionId, amount, ct);
 
-        var path = _settings.RefundPath.Replace("{paymentId}", transaction.ExternalReference, StringComparison.Ordinal);
+        var path = Settings.RefundPath.Replace("{paymentId}", transaction.ExternalReference, StringComparison.Ordinal);
         try
         {
-            var response = await _api.PostAsync(path, new { amount = new { currency = transaction.Currency, value = amount } }, ct);
+            var response = await Api.PostAsync(path, new { amount = new { currency = transaction.Currency, value = amount } }, ct);
             var refundId = PspStrategyHelper.ReadString(response, "refundId", "id") ?? $"RF-WRO-{Guid.NewGuid():N}"[..24];
             return new RefundResult(true, refundId, amount, "REFUNDED");
         }
-        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        catch (PspIntegrationException ex) when (Settings.EnableSimulationFallback)
         {
             Logger.LogWarning(ex, "Reembolso Wero em fallback simulado");
             return await base.RefundAsync(transactionId, amount, ct);

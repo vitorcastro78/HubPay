@@ -1,0 +1,89 @@
+@page "/admin/psp-merchants/new"
+@page "/admin/psp-merchants/{Scheme}/{MerchantId}"
+@using HubPay.Application.DTOs.Admin
+@inject HubPay.Frontend.Blazor.Services.HubPayApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Merchant PSP — HubPay</PageTitle>
+
+<h1 class="mb-3">@(_isNew ? "Novo override merchant" : $"Editar {Scheme}/{MerchantId}")</h1>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<div class="card">
+    <div class="card-body">
+        <div class="form-group">
+            <label>Scheme</label>
+            <input class="form-control" @bind="_scheme" disabled="@(!_isNew)" />
+        </div>
+        <div class="form-group">
+            <label>Merchant ID</label>
+            <input class="form-control" @bind="_merchantId" disabled="@(!_isNew)" />
+        </div>
+        <div class="form-group">
+            <label>Settings JSON</label>
+            <textarea class="form-control font-monospace" rows="10" @bind="_settingsJson"></textarea>
+            <small class="text-muted">
+                SIBS: {"multibancoEntity":"11683"} — Wero: {"debtorIban":"DE...","creditorIban":"FR..."}
+            </small>
+        </div>
+        <button class="btn btn-success" disabled="@_saving" @onclick="SaveAsync">Guardar</button>
+        <a class="btn btn-secondary ml-2" href="admin/psp-merchants">Cancelar</a>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string? Scheme { get; set; }
+    [Parameter] public string? MerchantId { get; set; }
+
+    private bool _isNew => string.Equals(Scheme, "new", StringComparison.OrdinalIgnoreCase);
+    private string _scheme = "SIBS";
+    private string _merchantId = "";
+    private string _settingsJson = "{\n  \"multibancoEntity\": \"11683\"\n}";
+    private bool _saving;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (_isNew) return;
+
+        var item = await Api.GetPspMerchantsAsync(Scheme);
+        var match = item?.FirstOrDefault(m =>
+            string.Equals(m.MerchantId, MerchantId, StringComparison.Ordinal));
+
+        if (match is null)
+        {
+            _error = "Registo não encontrado.";
+            return;
+        }
+
+        _scheme = match.Scheme;
+        _merchantId = match.MerchantId;
+        _settingsJson = match.SettingsJson;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            var request = new UpsertPspMerchantRequest(_scheme.Trim().ToUpperInvariant(), _merchantId.Trim(), _settingsJson);
+            var result = await Api.UpsertPspMerchantAsync(request, !_isNew);
+            if (result is null)
+            {
+                _error = "Falha ao gravar (JSON inválido?).";
+                return;
+            }
+
+            Nav.NavigateTo("admin/psp-merchants");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

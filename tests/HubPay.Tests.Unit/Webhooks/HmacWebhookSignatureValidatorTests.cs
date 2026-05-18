@@ -1,6 +1,6 @@
 using HubPay.Domain.Configuration;
+using HubPay.Infrastructure.Configuration;
 using HubPay.Infrastructure.Webhooks;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Tests.Unit.Webhooks;
 
@@ -9,14 +9,16 @@ public sealed class HmacWebhookSignatureValidatorTests
     [Fact]
     public void Validate_ValidSignature_ReturnsTrue()
     {
-        var settings = new HubPaySettings
+        var provider = new HubPaySettingsProvider();
+        provider.Initialize(new HubPaySettings
         {
             Webhooks = new WebhookSettings
             {
                 SchemeSecrets = new Dictionary<string, string> { ["MBWAY"] = "secret-test" }
             }
-        };
-        var validator = new HmacWebhookSignatureValidator(Options.Create(settings));
+        });
+
+        var validator = new HmacWebhookSignatureValidator(provider);
         var payload = """{"status":"SUCCESS"}""";
         var secret = "secret-test";
         using var hmac = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(secret));
@@ -28,8 +30,9 @@ public sealed class HmacWebhookSignatureValidatorTests
     [Fact]
     public void Validate_InvalidSignature_ReturnsFalse()
     {
-        var settings = new HubPaySettings();
-        var validator = new HmacWebhookSignatureValidator(Options.Create(settings));
+        var provider = new HubPaySettingsProvider();
+        provider.Initialize(new HubPaySettings());
+        var validator = new HmacWebhookSignatureValidator(provider);
         Assert.False(validator.Validate("MBWAY", "{}", "invalid"));
     }
 }

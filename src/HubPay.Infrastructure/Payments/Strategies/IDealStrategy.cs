@@ -1,11 +1,9 @@
 using System.Text.Json;
 using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
-using HubPay.Domain.Exceptions;
 using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
@@ -13,12 +11,11 @@ public sealed class IDealStrategy : PspEndpointStrategyBase
 {
     public IDealStrategy(
         HttpClient httpClient,
+        IHubPaySettingsProvider settingsProvider,
         ILogger<IDealStrategy> logger,
-        ITransactionRepository repository,
-        IOptions<HubPaySettings> options)
-        : base(httpClient, options.Value.Ideal, "IDEAL", logger, repository) { }
+        ITransactionRepository repository)
+        : base(httpClient, settingsProvider, s => s.Ideal, "IDEAL", logger, repository) { }
 
-    public override string SchemeName => "IDEAL";
     protected override string PaymentInitPath => "/v1/transactions";
     protected override string? DefaultRedirectUrl => "https://ideal.nl/checkout";
 
@@ -42,24 +39,12 @@ public sealed class IDealStrategy : PspEndpointStrategyBase
                           ?? $"{DefaultRedirectUrl}?token={token}";
         var qrPayload = PspStrategyHelper.ReadString(response, "qrCode", "qrPayload")
                         ?? IdealQrBuilder.Build(token, transaction.Amount);
-        var emvQr = IdealQrBuilder.BuildEmvQr(token, transaction.Amount, transaction.MerchantId);
-        var externalRef = PspStrategyHelper.ReadString(response, "paymentId", "id", "transactionId")
+        var externalRef = PspStrategyHelper.ReadString(response, "paymentId", "id", "transactionToken")
                           ?? $"IDL-{token}"[..24];
 
         var details = new PaymentSchemeDetails(IdealQrPayload: qrPayload);
-        Logger.LogInformation("iDEAL iniciado token={Token}", token);
+        var enrichedPayload = new { transactionToken = token, redirectUrl, qrCode = qrPayload, endToEndId = transaction.EndToEndId };
 
-        var enrichedPayload = new
-        {
-            transactionToken = token,
-            redirectUrl,
-            qrCode = qrPayload,
-            emvQr,
-            endToEndId = transaction.EndToEndId
-        };
-
-        return new PaymentResult(
-            true, externalRef, "Pending", redirectUrl,
-            JsonSerializer.Serialize(enrichedPayload), details);
+        return new PaymentResult(true, externalRef, "Pending", redirectUrl, JsonSerializer.Serialize(enrichedPayload), details);
     }
 }

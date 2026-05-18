@@ -48,14 +48,8 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-var hubPaySettings = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<HubPaySettings>>().Value;
+var hubPaySettings = await app.LoadHubPaySettingsFromDatabaseAsync();
 PspMutualTlsDiagnostics.LogConfiguration(app.Logger, hubPaySettings);
-if (hubPaySettings.ApplyMigrationsOnStartup)
-{
-    using var scope = app.Services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<HubPayDbContext>();
-    await db.Database.MigrateAsync();
-}
 
 app.UseSerilogRequestLogging();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -71,6 +65,7 @@ if (app.Environment.IsDevelopment())
 
 app.MapAuthEndpoints();
 app.MapPaymentEndpoints();
+app.MapPspAdminEndpoints();
 app.MapHub<TransactionHub>(TransactionHub.HubPath);
 app.MapHubPayHealthChecks();
 

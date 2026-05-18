@@ -6,53 +6,55 @@ using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
 using HubPay.Infrastructure.Payments.Webhooks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
 public sealed class BizumStrategy : PaymentStrategyBase
 {
-    private readonly BizumApiSettings _settings;
-    private readonly PspApiClient _api;
+    private readonly IHubPaySettingsProvider _settingsProvider;
 
     public BizumStrategy(
         HttpClient httpClient,
         ILogger<BizumStrategy> logger,
         ITransactionRepository repository,
-        IOptions<HubPaySettings> options) : base(httpClient, logger, repository)
+        IHubPaySettingsProvider settingsProvider) : base(httpClient, logger, repository)
     {
-        _settings = options.Value.Bizum;
-        _api = new PspApiClient(httpClient, _settings, SchemeName, logger);
-        if (!string.IsNullOrWhiteSpace(_settings.ApiKey))
-            httpClient.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _settings.ApiKey);
+        _settingsProvider = settingsProvider;
     }
 
     public override string SchemeName => "BIZUM";
+    private BizumApiSettings Settings => _settingsProvider.Current.Bizum;
+    private PspApiClient Api => new(HttpClient, Settings, SchemeName, Logger);
 
     public override async Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
     {
-        PspStrategyHelper.EnsureProductionReady(_settings, SchemeName);
+        PspStrategyHelper.EnsureProductionReady(Settings, SchemeName);
         var phone = PspPhoneValidator.RequirePhone(transaction.CustomerPhone, SchemeName);
+
+        if (!string.IsNullOrWhiteSpace(Settings.ApiKey))
+        {
+            HttpClient.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Settings.ApiKey);
+        }
 
         var payload = new
         {
             orderId = transaction.EndToEndId,
             amount = new { value = transaction.Amount, currency = "EUR" },
             buyerPhone = phone,
-            notificationUrl = PspStrategyHelper.WebhookUrl(_settings, SchemeName)
+            notificationUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
         };
 
         try
         {
-            var response = await _api.PostAsync(_settings.PaymentInitPath, payload, ct);
+            var response = await Api.PostAsync(Settings.PaymentInitPath, payload, ct);
             var externalRef = PspStrategyHelper.ReadString(response, "paymentId", "id") ?? transaction.Id.ToString();
             var redirectUrl = PspStrategyHelper.ReadString(response, "redirectUrl", "confirmationUrl");
 
             Logger.LogInformation("Bizum iniciado ref={Ref} phone={Phone}", externalRef, phone);
             return new PaymentResult(true, externalRef, "Pending", redirectUrl, JsonSerializer.Serialize(payload));
         }
-        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        catch (PspIntegrationException ex) when (Settings.EnableSimulationFallback)
         {
             return PspStrategyHelper.BuildFallback(
                 transaction, SchemeName, "Pending", "https://bizum.es/app/confirm", payload, null, Logger, ex);
@@ -74,14 +76,14 @@ public sealed class BizumStrategy : PaymentStrategyBase
         if (string.IsNullOrWhiteSpace(transaction.ExternalReference))
             return await base.RefundAsync(transactionId, amount, ct);
 
-        var path = _settings.RefundPath.Replace("{paymentId}", transaction.ExternalReference, StringComparison.Ordinal);
+        var path = Settings.RefundPath.Replace("{paymentId}", transaction.ExternalReference, StringComparison.Ordinal);
         try
         {
-            var response = await _api.PostAsync(path, new { amount }, ct);
+            var response = await Api.PostAsync(path, new { amount }, ct);
             var refundId = PspStrategyHelper.ReadString(response, "refundId", "id") ?? $"RF-BZM-{Guid.NewGuid():N}"[..24];
             return new RefundResult(true, refundId, amount, "REFUNDED");
         }
-        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        catch (PspIntegrationException ex) when (Settings.EnableSimulationFallback)
         {
             Logger.LogWarning(ex, "Reembolso Bizum em fallback simulado");
             return await base.RefundAsync(transactionId, amount, ct);

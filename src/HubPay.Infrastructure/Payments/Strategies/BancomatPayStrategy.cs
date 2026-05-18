@@ -1,10 +1,7 @@
 using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
-using HubPay.Domain.Exceptions;
 using HubPay.Domain.Interfaces;
-using HubPay.Domain.Models;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
@@ -12,12 +9,11 @@ public sealed class BancomatPayStrategy : PspEndpointStrategyBase
 {
     public BancomatPayStrategy(
         HttpClient httpClient,
+        IHubPaySettingsProvider settingsProvider,
         ILogger<BancomatPayStrategy> logger,
-        ITransactionRepository repository,
-        IOptions<HubPaySettings> options)
-        : base(httpClient, options.Value.BancomatPay, "BANCOMATPAY", logger, repository) { }
+        ITransactionRepository repository)
+        : base(httpClient, settingsProvider, s => s.BancomatPay, "BANCOMATPAY", logger, repository) { }
 
-    public override string SchemeName => "BANCOMATPAY";
     protected override string PaymentInitPath => "/v1/payments";
     protected override string? DefaultRedirectUrl => null;
 

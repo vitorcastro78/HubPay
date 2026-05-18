@@ -1,0 +1,111 @@
+@page "/admin/psp/new"
+@page "/admin/psp/{Scheme}"
+@using HubPay.Application.DTOs.Admin
+@inject HubPay.Frontend.Blazor.Services.HubPayApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>@(_isNew ? "Novo PSP" : $"Editar {Scheme}") — HubPay</PageTitle>
+
+<h1 class="mb-3">@(_isNew ? "Novo provedor PSP" : $"Editar {Scheme}")</h1>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<div class="card">
+    <div class="card-body">
+        @if (_isNew)
+        {
+            <div class="form-group">
+                <label>Scheme</label>
+                <input class="form-control" @bind="_newScheme" placeholder="SIBS, BIZUM, WERO, IDEAL..." />
+                <small class="text-muted">Identificador único (maiúsculas).</small>
+            </div>
+        }
+
+        <div class="form-group">
+            <div class="custom-control custom-checkbox">
+                <input type="checkbox" class="custom-control-input" id="enabled" @bind="_isEnabled" />
+                <label class="custom-control-label" for="enabled">Ativo</label>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Settings JSON</label>
+            <textarea class="form-control font-monospace" rows="18" @bind="_settingsJson"></textarea>
+            <small class="text-muted">JSON camelCase (baseUrl, apiKey, mutualTls, enableSimulationFallback, ...).</small>
+        </div>
+
+        <button class="btn btn-success" disabled="@_saving" @onclick="SaveAsync">
+            @if (_saving) { <i class="fas fa-spinner fa-spin"></i> } else { <i class="fas fa-save"></i> }
+            Guardar
+        </button>
+        <a class="btn btn-secondary ml-2" href="admin/psp">Cancelar</a>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string? Scheme { get; set; }
+
+    private bool _isNew => string.Equals(Scheme, "new", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(Scheme);
+    private string _newScheme = "";
+    private bool _isEnabled = true;
+    private string _settingsJson = "{\n  \"baseUrl\": \"\",\n  \"apiKey\": \"\",\n  \"enableSimulationFallback\": false\n}";
+    private bool _saving;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (_isNew) return;
+
+        var item = await Api.GetPspProviderAsync(Scheme!);
+        if (item is null)
+        {
+            _error = "Configuração não encontrada.";
+            return;
+        }
+
+        _isEnabled = item.IsEnabled;
+        _settingsJson = FormatJson(item.SettingsJson);
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            if (_isNew)
+            {
+                var created = await Api.CreatePspProviderAsync(new CreatePspProviderRequest(
+                    _newScheme.Trim().ToUpperInvariant(), _isEnabled, _settingsJson));
+                if (created is null) { _error = "Falha ao criar (verifique JSON e scheme único)."; return; }
+                Nav.NavigateTo($"admin/psp/{created.Scheme}");
+            }
+            else
+            {
+                var updated = await Api.UpdatePspProviderAsync(Scheme!, new UpdatePspProviderRequest(_isEnabled, _settingsJson));
+                if (updated is null) { _error = "Falha ao atualizar."; return; }
+                _settingsJson = FormatJson(updated.SettingsJson);
+            }
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FormatJson(string json)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return json;
+        }
+    }
+}

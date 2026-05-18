@@ -2,7 +2,6 @@ using HubPay.Domain.Configuration;
 using HubPay.Domain.Entities;
 using HubPay.Domain.Interfaces;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
@@ -10,12 +9,11 @@ public sealed class VippsMobilePayStrategy : PspEndpointStrategyBase
 {
     public VippsMobilePayStrategy(
         HttpClient httpClient,
+        IHubPaySettingsProvider settingsProvider,
         ILogger<VippsMobilePayStrategy> logger,
-        ITransactionRepository repository,
-        IOptions<HubPaySettings> options)
-        : base(httpClient, options.Value.VippsMobilePay, "VIPPSMOBILEPAY", logger, repository) { }
+        ITransactionRepository repository)
+        : base(httpClient, settingsProvider, s => s.VippsMobilePay, "VIPPSMOBILEPAY", logger, repository) { }
 
-    public override string SchemeName => "VIPPSMOBILEPAY";
     protected override string PaymentInitPath => "/epayment/v1/payments";
     protected override string? DefaultRedirectUrl => "https://api.vipps.no/dwo/checkout";
 

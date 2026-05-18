@@ -19,6 +19,7 @@ public sealed class WebApiFactory : WebApplicationFactory<Program>
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["HubPay:ApplyMigrationsOnStartup"] = "false",
+                ["HubPay:LoadPspConfigurationFromDatabase"] = "false",
                 ["HubPay:RedisConnectionString"] = "localhost:6379,abortConnect=false",
                 ["HubPay:ClearingIntervalSeconds"] = "3600",
                 ["HubPay:RequireMutualTlsInProduction"] = "false",

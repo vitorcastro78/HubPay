@@ -1,5 +1,7 @@
 using HubPay.Domain.Configuration;
 using HubPay.Domain.Interfaces;
+using HubPay.Application.Interfaces;
+using HubPay.Infrastructure.Configuration;
 using HubPay.Infrastructure.AntiFraud;
 using HubPay.Infrastructure.Clearing;
 using HubPay.Infrastructure.Notifications;
@@ -12,6 +14,7 @@ using HubPay.Infrastructure.Redis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Polly;
 using Polly.Extensions.Http;
 using StackExchange.Redis;
@@ -23,6 +26,11 @@ public static class DependencyInjection
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<HubPaySettings>(configuration.GetSection(HubPaySettings.SectionName));
+        services.AddSingleton<IHubPaySettingsProvider, HubPaySettingsProvider>();
+        services.AddSingleton<IConfigureOptions<HubPaySettings>, ConfigureHubPaySettingsFromDatabase>();
+        services.AddScoped<DatabaseHubPaySettingsLoader>();
+        services.AddScoped<PspConfigurationSeeder>();
+        services.AddScoped<IPspConfigurationAdminService, PspConfigurationAdminService>();
 
         var settings = configuration.GetSection(HubPaySettings.SectionName).Get<HubPaySettings>()
                        ?? new HubPaySettings();

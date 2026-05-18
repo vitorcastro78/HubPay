@@ -6,31 +6,30 @@ using HubPay.Domain.Interfaces;
 using HubPay.Domain.Models;
 using HubPay.Infrastructure.Payments.Webhooks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Payments.Strategies;
 
 public sealed class MultibancoStrategy : PaymentStrategyBase
 {
-    private readonly SibsApiSettings _settings;
-    private readonly PspApiClient _api;
+    private readonly IHubPaySettingsProvider _settingsProvider;
 
     public MultibancoStrategy(
         HttpClient httpClient,
         ILogger<MultibancoStrategy> logger,
         ITransactionRepository repository,
-        IOptions<HubPaySettings> options) : base(httpClient, logger, repository)
+        IHubPaySettingsProvider settingsProvider) : base(httpClient, logger, repository)
     {
-        _settings = options.Value.Sibs;
-        _api = new PspApiClient(httpClient, _settings, SchemeName, logger);
+        _settingsProvider = settingsProvider;
     }
 
     public override string SchemeName => "MULTIBANCO";
+    private SibsApiSettings Settings => _settingsProvider.Current.Sibs;
+    private PspApiClient Api => new(HttpClient, Settings, SchemeName, Logger);
 
     public override async Task<PaymentResult> ProcessAsync(Transaction transaction, CancellationToken ct)
     {
-        PspStrategyHelper.EnsureProductionReady(_settings, SchemeName);
-        var entity = _settings.ResolveMultibancoEntity(transaction.MerchantId);
+        PspStrategyHelper.EnsureProductionReady(Settings, SchemeName);
+        var entity = Settings.ResolveMultibancoEntity(transaction.MerchantId);
         var (entityCode, reference, dueDate) = MultibancoReferenceGenerator.Generate(transaction.Amount, transaction.MerchantId, entity);
 
         var payload = new
@@ -41,21 +40,21 @@ public sealed class MultibancoStrategy : PaymentStrategyBase
             amount = new { value = transaction.Amount, currency = transaction.Currency },
             dueDate = dueDate.ToString("yyyy-MM-dd"),
             endToEndId = transaction.EndToEndId,
-            notificationUrl = PspStrategyHelper.WebhookUrl(_settings, SchemeName)
+            notificationUrl = PspStrategyHelper.WebhookUrl(Settings, SchemeName)
         };
 
         var details = new PaymentSchemeDetails(entityCode, reference, dueDate);
 
         try
         {
-            var response = await _api.PostAsync(_settings.MultibancoInitPath, payload, ct);
+            var response = await Api.PostAsync(Settings.MultibancoInitPath, payload, ct);
             var externalRef = PspStrategyHelper.ReadString(response, "paymentReference", "id")
                               ?? $"{entityCode}/{reference}";
 
             Logger.LogInformation("Multibanco SIBS entidade={Entity} ref={Ref}", entityCode, reference);
             return new PaymentResult(true, externalRef, "Pending", null, JsonSerializer.Serialize(payload), details);
         }
-        catch (PspIntegrationException ex) when (_settings.EnableSimulationFallback)
+        catch (PspIntegrationException ex) when (Settings.EnableSimulationFallback)
         {
             return PspStrategyHelper.BuildFallback(
                 transaction, SchemeName, "Pending", null, payload, details, Logger, ex);

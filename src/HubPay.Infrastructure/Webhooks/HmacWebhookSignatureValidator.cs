@@ -1,23 +1,22 @@
 using System.Security.Cryptography;
 using System.Text;
-using HubPay.Domain.Configuration;
 using HubPay.Domain.Interfaces;
-using Microsoft.Extensions.Options;
 
 namespace HubPay.Infrastructure.Webhooks;
 
 public sealed class HmacWebhookSignatureValidator : IWebhookSignatureValidator
 {
-    private readonly WebhookSettings _settings;
+    private readonly IHubPaySettingsProvider _settingsProvider;
 
-    public HmacWebhookSignatureValidator(IOptions<HubPaySettings> options) =>
-        _settings = options.Value.Webhooks;
+    public HmacWebhookSignatureValidator(IHubPaySettingsProvider settingsProvider) =>
+        _settingsProvider = settingsProvider;
 
     public bool Validate(string scheme, string payload, string? signatureHeader)
     {
         if (string.IsNullOrWhiteSpace(signatureHeader)) return false;
 
-        var secret = ResolveSecret(scheme);
+        var webhooks = _settingsProvider.Current.Webhooks;
+        var secret = ResolveSecret(webhooks.SchemeSecrets, scheme);
         var expected = ComputeHmacSha256(payload, secret);
         var provided = signatureHeader.Trim();
 
@@ -36,11 +35,11 @@ public sealed class HmacWebhookSignatureValidator : IWebhookSignatureValidator
         }
     }
 
-    private string ResolveSecret(string scheme)
+    private static string ResolveSecret(Dictionary<string, string> secrets, string scheme)
     {
-        if (_settings.SchemeSecrets.TryGetValue(scheme.ToUpperInvariant(), out var secret))
+        if (secrets.TryGetValue(scheme.ToUpperInvariant(), out var secret) && !string.IsNullOrEmpty(secret))
             return secret;
-        return _settings.SchemeSecrets["DEFAULT"];
+        return secrets.GetValueOrDefault("DEFAULT") ?? string.Empty;
     }
 
     private static string ComputeHmacSha256(string payload, string secret)
