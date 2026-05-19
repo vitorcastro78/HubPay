@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using HubPay.Application;
 using HubPay.Domain.Configuration;
 using HubPay.Infrastructure;
-using HubPay.Infrastructure.Payments.MutualTls;
+using HubPay.Domain.Interfaces;
 using HubPay.Infrastructure.Persistence;
 using HubPay.WebApi.Auth;
 using HubPay.WebApi.Endpoints;
@@ -14,6 +14,8 @@ using HubPay.WebApi.Services;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.AddServiceDefaults();
 
 builder.Host.UseSerilog((ctx, cfg) => cfg
     .ReadFrom.Configuration(ctx.Configuration)
@@ -29,27 +31,44 @@ builder.Services.AddValidatorsFromAssemblyContaining<HubPay.Application.Validato
 builder.Services.AddHubPayAuthentication(builder.Configuration);
 builder.Services.AddHubPayObservability();
 builder.Services.AddHubPayHealthChecks(builder.Configuration);
+builder.Services.AddHostedService<HubPaySettingsBootstrapHostedService>();
 
 builder.Services.AddSignalR();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddOpenApi();
+builder.Services.AddHubPaySwagger();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Blazor", policy =>
-        policy.WithOrigins(
+    {
+        var configuredOrigins = builder.Configuration.GetSection("HubPay:CorsOrigins").Get<string[]>();
+        if (configuredOrigins is { Length: > 0 })
+        {
+            policy.WithOrigins(configuredOrigins);
+        }
+        else if (builder.Environment.IsDevelopment())
+        {
+            policy.SetIsOriginAllowed(origin =>
+                Uri.TryCreate(origin, UriKind.Absolute, out var uri) &&
+                uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
+        }
+        else
+        {
+            policy.WithOrigins(
                 "https://localhost:7239",
                 "http://localhost:5176",
-                "https://localhost:7089",
-                "http://localhost:5176")
-            .AllowAnyHeader()
+                "https://localhost:7061");
+        }
+
+        policy.AllowAnyHeader()
             .AllowAnyMethod()
-            .AllowCredentials());
+            .AllowCredentials();
+    });
 });
 
 var app = builder.Build();
 
-var hubPaySettings = await app.LoadHubPaySettingsFromDatabaseAsync();
-PspMutualTlsDiagnostics.LogConfiguration(app.Logger, hubPaySettings);
+var bootstrapSettings = app.Configuration.GetSection(HubPaySettings.SectionName).Get<HubPaySettings>()
+                      ?? new HubPaySettings();
+app.Services.GetRequiredService<IHubPaySettingsProvider>().Initialize(bootstrapSettings);
 
 app.UseSerilogRequestLogging();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -58,10 +77,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseMiddleware<IdempotencyMiddleware>();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+app.UseHubPaySwagger();
 
 app.MapAuthEndpoints();
 app.MapPaymentEndpoints();

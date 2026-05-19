@@ -35,12 +35,17 @@ public static class DependencyInjection
         var settings = configuration.GetSection(HubPaySettings.SectionName).Get<HubPaySettings>()
                        ?? new HubPaySettings();
 
+        var connectionString = configuration.GetConnectionString("hubpay")
+                               ?? settings.ConnectionString;
+        var redisConnectionString = configuration.GetConnectionString("redis")
+                                    ?? settings.RedisConnectionString;
+
         services.AddDbContext<HubPayDbContext>(options =>
-            options.UseNpgsql(settings.ConnectionString));
+            options.UseNpgsql(connectionString));
 
         services.AddSingleton<IConnectionMultiplexer>(_ =>
         {
-            var redisOptions = ConfigurationOptions.Parse(settings.RedisConnectionString);
+            var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
             redisOptions.AbortOnConnectFail = false;
             return ConnectionMultiplexer.Connect(redisOptions);
         });

@@ -3,6 +3,7 @@ using System;
 using HubPay.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HubPay.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(HubPayDbContext))]
-    partial class HubPayDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260518231359_AddPspConfigurationAndProductionFields")]
+    partial class AddPspConfigurationAndProductionFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

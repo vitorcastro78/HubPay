@@ -5,6 +5,8 @@ public class PspEndpointSettings
     public string BaseUrl { get; set; } = string.Empty;
     public string ApiKey { get; set; } = string.Empty;
     public string ClientId { get; set; } = string.Empty;
+    /// <summary>OAuth client secret (e.g. SIBS API Market). Never commit to source control.</summary>
+    public string ClientSecret { get; set; } = string.Empty;
     public string MerchantId { get; set; } = string.Empty;
     public string WebhookBaseUrl { get; set; } = "https://api.hubpay.eu";
     public int TimeoutSeconds { get; set; } = 30;

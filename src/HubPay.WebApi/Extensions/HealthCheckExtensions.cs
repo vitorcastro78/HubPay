@@ -1,5 +1,6 @@
 using HubPay.Domain.Configuration;
 using HubPay.Infrastructure.Persistence;
+using HubPay.WebApi.OpenApi;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using StackExchange.Redis;
 
@@ -10,10 +11,12 @@ public static class HealthCheckExtensions
     public static IServiceCollection AddHubPayHealthChecks(this IServiceCollection services, IConfiguration configuration)
     {
         var settings = configuration.GetSection(HubPaySettings.SectionName).Get<HubPaySettings>() ?? new HubPaySettings();
+        var connectionString = configuration.GetConnectionString("hubpay") ?? settings.ConnectionString;
+        var redisConnectionString = configuration.GetConnectionString("redis") ?? settings.RedisConnectionString;
 
         services.AddHealthChecks()
-            .AddNpgSql(settings.ConnectionString, name: "postgresql", tags: ["db", "ready"])
-            .AddRedis(settings.RedisConnectionString, name: "redis", tags: ["cache", "ready"])
+            .AddNpgSql(connectionString, name: "postgresql", tags: ["db", "ready"], timeout: TimeSpan.FromSeconds(5))
+            .AddRedis(redisConnectionString, name: "redis", tags: ["cache", "ready"], timeout: TimeSpan.FromSeconds(3))
             .AddCheck<OnnxModelHealthCheck>("onnx-model", tags: ["antifraud", "ready"]);
 
         return services;
@@ -21,11 +24,32 @@ public static class HealthCheckExtensions
 
     public static WebApplication MapHubPayHealthChecks(this WebApplication app)
     {
-        app.MapHealthChecks("/health");
+        // Fast liveness probe for Aspire / orchestrators (no PostgreSQL or Redis).
+        app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+            {
+                Predicate = check => check.Tags.Contains("live")
+            })
+            .WithTags(HubPayApiDescriptions.TagHealth)
+            .WithName("HealthLive")
+            .AllowAnonymous();
+
+        app.MapHealthChecks("/health")
+            .WithTags(HubPayApiDescriptions.TagHealth)
+            .WithName("Health")
+            .WithSummary(HubPayApiDescriptions.HealthSummary)
+            .WithDescription(HubPayApiDescriptions.HealthDescription)
+            .AllowAnonymous();
+
         app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
-        {
-            Predicate = check => check.Tags.Contains("ready")
-        });
+            {
+                Predicate = check => check.Tags.Contains("ready")
+            })
+            .WithTags(HubPayApiDescriptions.TagHealth)
+            .WithName("HealthReady")
+            .WithSummary(HubPayApiDescriptions.HealthReadySummary)
+            .WithDescription(HubPayApiDescriptions.HealthReadyDescription)
+            .AllowAnonymous();
+
         return app;
     }
 }
